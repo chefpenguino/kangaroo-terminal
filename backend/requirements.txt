@@ -1,6 +1,8 @@
 fastapi
 uvicorn
 yfinance
-supabase
+sqlalchemy  
+pydantic
 python-dotenv
 pandas
+requests

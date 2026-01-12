@@ -38,7 +38,7 @@ A unified, friendly dashboard that:
 
 *   **Frontend:** Next.js (React), TypeScript, Tailwind CSS.
 *   **Backend:** Python (FastAPI) for data processing and financial logic.
-*   **Database:** PostgreSQL (Supabase).
+*   **Database:** SqlAlchemy (Local), Supabase for Deployment
 *   **AI/ML:** Gemini API for RAG (Retrieval-Augmented Generation) on financial documents.
 *   **Data Sources:** yfinance, ASX official announcements (scraped).
 
