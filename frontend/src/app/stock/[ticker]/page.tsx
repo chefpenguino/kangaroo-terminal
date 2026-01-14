@@ -195,7 +195,7 @@ export default function StockDetail() {
 
             <div className="flex-1 relative w-full h-full min-h-100">
                 {loading && (
-                    <div className="absolute-inset-0 flex items-center justify-center bg-background/80 z-10">
+                    <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-10">
                         <Loader2 className="animate-spin text-primary" size={32} />
                     </div>
                 )}
