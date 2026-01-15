@@ -7,3 +7,8 @@ pandas
 playwright
 requests
 pytz
+yfinance
+feedparser
+newspaper3k
+lxml
+readability-lxml
