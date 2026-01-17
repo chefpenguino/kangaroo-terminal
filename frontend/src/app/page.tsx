@@ -127,7 +127,7 @@ export default function Home() {
       {/* hero section */}
       <div className="flex justify-between items-end mb-8">
         <div>
-          <h2 className="text-3xl font-bold text-white">Overview</h2>
+          <h2 className="text-4xl font-instrument text-white">Dashboard</h2>
           <p className="text-gray-500 text-sm mt-1">Real-time market intelligence</p> 
         </div>
         

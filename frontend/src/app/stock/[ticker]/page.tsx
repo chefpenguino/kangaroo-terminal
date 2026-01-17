@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Loader2, ArrowDownRight, X, ExternalLink } from "lucide-react";
+import { ArrowLeft, Loader2, ArrowDownRight, X, ExternalLink, BrainCircuit, Calculator, Star } from "lucide-react";
 import Link from "next/link";
 import { createChart, ColorType, CandlestickSeries, HistogramSeries } from 'lightweight-charts';
 
@@ -89,11 +89,18 @@ export default function StockDetail() {
   const [companyInfo, setCompanyInfo] = useState<any>(null);  
   const [financials, setFinancials] = useState<any>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
-  const [activeTab, setActiveTab] = useState("news"); // 'news' | 'financials'
+  const [activeTab, setActiveTab] = useState("news"); // 'news' | 'financials' | 'ai' | 'valuation'
   const [news, setNews] = useState<any[]>([]); 
   const [selectedArticle, setSelectedArticle] = useState<any>(null); 
   const [articleContent, setArticleContent] = useState<any>(null); 
   const [reading, setReading] = useState(false); 
+  const [aiReport, setAiReport] = useState<string | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [valuation, setValuation] = useState<any>(null);  
+  const [growthRate, setGrowthRate] = useState(5); // 5% growth
+  const [discountRate, setDiscountRate] = useState(10); // 10% discount
+  const [terminalMultiple, setTerminalMultiple] = useState(10); // 10x exit multiple
+  const [isWatched, setIsWatched] = useState(false);
 
   const timeframes = [
     { label: '1D', period: '1d', interval: '5m' },
@@ -128,6 +135,16 @@ export default function StockDetail() {
         const finRes = await fetch(`http://localhost:8000/stock/${ticker}/financials`);
         const finJson = await finRes.json();
         setFinancials(finJson);
+
+        // fetch valuation
+        const valRes = await fetch(`http://localhost:8000/stock/${ticker}/valuation`);
+        const valJson = await valRes.json();
+        setValuation(valJson);
+
+        // fetch watchlist status
+        const stockDbRes = await fetch(`http://localhost:8000/stock/${ticker}`);
+        const stockDbJson = await stockDbRes.json();
+        setIsWatched(stockDbJson.is_watched);
       } catch (e) {
         console.error(e);
       } finally {
@@ -231,6 +248,68 @@ export default function StockDetail() {
     }
   };
 
+  const generateAnalysis = async () => {
+    setAnalyzing(true);
+    try {
+      const res = await fetch(`http://localhost:8000/stock/${ticker}/analyse`);
+      const json = await res.json();
+      setAiReport(json.report);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  const toggleWatchlist = async () => {
+    const newState = !isWatched;
+    setIsWatched(newState); 
+    try {
+      await fetch(`http://localhost:8000/stock/${ticker}/toggle-watch`, { method: "POST" });
+    } catch (e) {
+      console.error(e);
+      setIsWatched(!newState); // revert on error
+    }
+  };
+
+  // dcf calculation
+  const calculateFairValue = () => {
+    if (!valuation || valuation.error || !valuation.fcf) return 0;
+
+    const { fcf, total_debt, cash, shares_outstanding } = valuation;
+    
+    // project fcf for next 5 years
+    let futureCashFlows = 0;
+    let projectedFCF = fcf;
+    
+    for (let i = 1; i <= 5; i++) {
+        // grow the fcf
+        projectedFCF = projectedFCF * (1 + (growthRate / 100));
+        // discount it back to today
+        futureCashFlows += projectedFCF / Math.pow(1 + (discountRate / 100), i);
+    }
+
+    // calculate terminal value (value at year 5)
+    // using exit multiple method: year 5 fcf * multiple
+    const terminalValue = projectedFCF * terminalMultiple;
+    // discount terminal value back to today
+    const discountedTerminalValue = terminalValue / Math.pow(1 + (discountRate / 100), 5);
+
+    // enterprise value = sum of discounted flows
+    const enterpriseValue = futureCashFlows + discountedTerminalValue;
+
+    // equity value = enterprise value + cash - debt
+    const equityValue = enterpriseValue + cash - total_debt;
+
+    // fair value per share
+    const fairValue = equityValue / shares_outstanding;
+    
+    return fairValue;
+  };
+
+  const fairValue = calculateFairValue();
+  const upside = valuation?.current_price ? ((fairValue - valuation.current_price) / valuation.current_price) * 100 : 0;
+
   return (
     <div className="animate-in fade-in duration-500">
       {/* back button */}
@@ -272,6 +351,21 @@ export default function StockDetail() {
             </div>
           </div>
         </div>
+
+        {/* watch button */}
+        <button 
+          onClick={toggleWatchlist}
+          className={`group flex items-center gap-2 px-4 py-2 rounded-xl border transition-all duration-300 ${
+            isWatched 
+              ? "bg-yellow-500/10 border-yellow-500/50 text-yellow-500" 
+              : "bg-surface border-white/10 text-gray-500 hover:border-white/30 hover:text-white"
+          }`}
+        >
+          <Star size={18} className={isWatched ? "fill-yellow-500" : "fill-transparent group-hover:scale-110 transition-transform"} />
+          <span className="text-sm font-bold tracking-wide">
+            {isWatched ? "WATCHING" : "WATCH"}
+          </span>
+        </button>
       </div>
 
       {/* grid layout; chart at the left & profile at tjhe right */}
@@ -364,12 +458,24 @@ export default function StockDetail() {
           >
             FINANCIALS
           </button>
+          <button
+            onClick={() => setActiveTab("ai")}
+            className={`pb-3 text-sm font-bold tracking-wide transition-colors border-b-2 ${activeTab === "ai" ? "text-primary border-primary" : "text-gray-500 border-transparent hover:text-white"}`}
+          >
+            ANALYSIS
+          </button>
+          <button 
+            onClick={() => setActiveTab("valuation")}
+            className={`pb-3 text-sm font-bold tracking-wide transition-colors border-b-2 ${activeTab === "valuation" ? "text-primary border-primary" : "text-gray-500 border-transparent hover:text-white"}`}
+          >
+            VALUATION
+          </button>
         </div>
 
         {/* tab: news */}
         {activeTab === "news" && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {news.length > 0 ? news.map((item: any, i) => {
+            {news.length > 0 ? news.map((item: any) => {
               // article data
               const article = item.content;
               // skip if data is missing
@@ -377,7 +483,7 @@ export default function StockDetail() {
 
               return (
                 <div 
-                  key={item.id || i}
+                  key={item.id || article.title}
                   onClick={() => openArticle(article.clickThroughUrl?.url || article.canonicalUrl?.url)}
                   className="luxury-card p-5 rounded-xl hover:border-primary/30 transition-all group flex flex-col justify-between h-full cursor-pointer"
                 >
@@ -425,7 +531,7 @@ export default function StockDetail() {
         {activeTab === "financials" && (
           <div className="luxury-card p-6 rounded-xl overflow-x-auto">
              {financials && Object.keys(financials).length > 0 ? (
-<table className="w-full text-left border-collapse">
+                 <table className="w-full text-left border-collapse">
                    <thead>
                      <tr>
                        <th className="p-4 border-b border-white/5 text-xs text-gray-500 uppercase tracking-wider font-medium">Metric</th>
@@ -437,7 +543,7 @@ export default function StockDetail() {
                      </tr>
                    </thead>
                    <tbody>
-                     {processFinancials(financials).rows.map((row, i) => (
+                     {processFinancials(financials).rows.map((row) => (
                        <tr key={row.label} className="group hover:bg-white/5 transition-colors">
                          {/* metric name */}
                          <td className="p-4 border-b border-white/5 text-sm font-bold text-white group-hover:text-primary transition-colors">
@@ -482,12 +588,145 @@ export default function StockDetail() {
              )}
           </div>
         )}
+
+        {/* tab: ai analyst */}
+        {activeTab === "ai" && (
+          <div className="luxury-card p-8 rounded-xl min-h-100">
+            {/* initial state */}
+            {!aiReport && !analyzing && (
+              <div className="flex flex-col items-center justify-center h-full py-12 text-center">
+                <div className="p-4 rounded-full bg-surface border border-white/5 mb-6 shadow-lg">
+                  <BrainCircuit size={48} className="text-gray-500" />
+                </div>
+                <h3 className="text-xl font-bold text-white mb-2 font-instrument">Generate Investment Thesis</h3>
+                <p className="text-gray-500 max-w-md mb-8 leading-relaxed">
+                  Engage the Kangaroo Neural Engine to analyse recent news sentiment and financial ratios for ${ticker}.
+                </p>
+                <button
+                  onClick={generateAnalysis}
+                  className="luxury-button"
+                >
+                  <span>Run Analysis</span>
+                  <BrainCircuit size={18} />
+                </button>
+              </div>
+            )}
+
+            {/* loading state */}
+            {analyzing && (
+              <div className="flex flex-col items-center justify-center h-full min-h-100 gap-6">
+                <div className="relative">
+                  <Loader2 className="animate-spin text-primary" size={48} />
+                  <div className="absolute inset-0 blur-xl bg-primary/20 rounded-full"></div>
+                </div>
+                <p className="text-sm text-stone-500">Synthesising News Sources...</p>
+              </div>
+            )}
+
+            {/* result state */}
+            {aiReport && (
+              <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
+                <div className="flex items-center gap-3 mb-8 border-b border-white/5 pb-4">
+                  <span className="text-s font-bold font-instrument text-primary ">AI Generated Report</span>
+                </div>
+
+                <div
+                  className="prose prose-invert prose-lg max-w-none
+                  prose-headings:text-white prose-headings:font-bold prose-headings:font-instrument prose-headings:text-2xl prose-headings:mt-8 prose-headings:mb-4
+                  prose-p:text-gray-300 prose-p:leading-relaxed prose-p:text-[1.05rem] prose-p:my-4
+                  prose-strong:text-white prose-strong:font-bold
+                  prose-ul:my-4 prose-li:text-gray-300"
+                  dangerouslySetInnerHTML={{ __html: aiReport }}
+                />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* tab: valuation */}
+        {activeTab === "valuation" && (
+          <div className="luxury-card p-8 rounded-xl min-h-100">
+             {valuation && !valuation.error ? (
+                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
+                    
+                    {/* left: the inputs (sliders) */}
+                    <div className="space-y-8">
+                        <div>
+                            <div className="flex justify-between text-sm mb-2 font-bold text-gray-400">
+                                <span>Expected Growth Rate (5Y)</span>
+                                <span className="text-primary">{growthRate}%</span>
+                            </div>
+                            <input 
+                                type="range" min="-10" max="50" step="1" 
+                                value={growthRate} 
+                                onChange={(e) => setGrowthRate(Number(e.target.value))}
+                                className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-primary"
+                            />
+                            <p className="text-xs text-gray-600 mt-2">How fast will the company grow its cash flow?</p>
+                        </div>
+
+                        <div>
+                            <div className="flex justify-between text-sm mb-2 font-bold text-gray-400">
+                                <span>Discount Rate (Risk)</span>
+                                <span className="text-primary">{discountRate}%</span>
+                            </div>
+                            <input 
+                                type="range" min="5" max="20" step="0.5" 
+                                value={discountRate} 
+                                onChange={(e) => setDiscountRate(Number(e.target.value))}
+                                className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-primary"
+                            />
+                            <p className="text-xs text-gray-600 mt-2">Higher risk = Higher discount rate.</p>
+                        </div>
+
+                        <div>
+                            <div className="flex justify-between text-sm mb-2 font-bold text-gray-400">
+                                <span>Exit Multiple (PE)</span>
+                                <span className="text-primary">{terminalMultiple}x</span>
+                            </div>
+                            <input 
+                                type="range" min="5" max="50" step="1" 
+                                value={terminalMultiple} 
+                                onChange={(e) => setTerminalMultiple(Number(e.target.value))}
+                                className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-primary"
+                            />
+                            <p className="text-xs text-gray-600 mt-2">What will someone pay for this stock in 5 years?</p>
+                        </div>
+                    </div>
+
+                    {/* right: the result */}
+                    <div className="flex flex-col items-center justify-center p-8 bg-black/20 rounded-2xl border border-white/5">
+                        <h3 className="text-sm font-bold text-gray-500 uppercase tracking-widest mb-4">Intrinsic Value (DCF)</h3>
+                        
+                        <div className="text-6xl font-bold text-white font-instrument mb-2">
+                            ${fairValue.toFixed(2)}
+                        </div>
+                        
+                        <div className={`text-sm font-bold px-3 py-1 rounded-full ${upside >= 0 ? "bg-green-500/10 text-green-400" : "bg-red-500/10 text-red-400"}`}>
+                            {upside >= 0 ? "Undervalued" : "Overvalued"} by {Math.abs(upside).toFixed(1)}%
+                        </div>
+
+                        <div className="mt-8 text-xs text-gray-600 font-mono w-full space-y-1">
+                            <div className="flex justify-between"><span>Current Price:</span> <span>${valuation.current_price.toFixed(2)}</span></div>
+                            <div className="flex justify-between"><span>Free Cash Flow:</span> <span>${(valuation.fcf / 1000000000).toFixed(2)}B</span></div>
+                            <div className="flex justify-between"><span>Net Debt:</span> <span>${((valuation.total_debt - valuation.cash) / 1000000000).toFixed(2)}B</span></div>
+                        </div>
+                    </div>
+
+                 </div>
+             ) : (
+               <div className="flex flex-col items-center justify-center h-full py-12 text-center text-gray-500 gap-4">
+                 <Calculator size={48} />
+                 <p>Insufficient financial data to build a model.</p>
+               </div>
+             )}
+          </div>
+        )}
       </div>
 
       {/* article reader (kangarooreader) */}
       {selectedArticle && (
         <div className="fixed inset-0 z-100 flex items-center justify-center p-4">
-          {/*  */}
           <div 
             className="absolute inset-0 bg-black/95 backdrop-blur-xl transition-opacity"
             onClick={() => setSelectedArticle(null)}
@@ -500,7 +739,7 @@ export default function StockDetail() {
             <div className="flex justify-between items-center px-8 py-5 border-b border-white/5 bg-background/95 backdrop-blur">
               <div className="flex items-center gap-2.5">
                 <h1 
-                  className="text-[1.7rem] font-instrument tracking-tight bg-linear-to-br via-stone-200 bg-clip-text text-transparent drop-shadow-[0_1.5px_1.5px_rgba(0,0,0,0.5)] whitespace-nowrap overflow-hidden">
+                  className="text-[1.7rem] font-instrument tracking-tight bg-linear-to-br from-white via-stone-200 to-stone-400 bg-clip-text text-transparent drop-shadow-[0_1.5px_1.5px_rgba(0,0,0,0.5)] whitespace-nowrap overflow-hidden">
                   KangarooTerminal
                 </h1>
               </div>
@@ -563,23 +802,16 @@ export default function StockDetail() {
                     {/* content */}
                     <div 
                       className="prose prose-invert prose-lg max-w-none 
-                      
-                      /* typography styles */
                       prose-headings:text-white prose-headings:font-bold prose-headings:font-instrument
                       prose-p:text-gray-300 prose-p:leading-relaxed prose-p:text-[1.1rem]
                       prose-a:text-primary prose-a:no-underline hover:prose-a:underline
                       prose-strong:text-white prose-strong:font-bold
                       prose-em:text-gray-300 prose-em:italic
                       prose-blockquote:border-l-primary prose-blockquote:bg-white/5 prose-blockquote:py-2 prose-blockquote:px-6 prose-blockquote:rounded-r-lg
-                      
-                      /* image styles */
                       prose-img:rounded-xl prose-img:border prose-img:border-white/10 prose-img:shadow-lg prose-img:my-8
-                      
-                      /* table styles */
                       prose-table:w-full prose-table:border-collapse prose-table:my-8 prose-table:text-sm
                       prose-th:text-primary prose-th:text-left prose-th:p-4 prose-th:border-b prose-th:border-white/10 prose-th:uppercase prose-th:tracking-wider
                       prose-td:p-4 prose-td:border-b prose-td:border-white/5 prose-td:text-gray-400"
-                      
                       dangerouslySetInnerHTML={{ __html: articleContent.html }} 
                     />
                   </div>

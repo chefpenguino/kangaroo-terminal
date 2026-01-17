@@ -1,6 +1,6 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Text, Boolean
-from sqlalchemy.orm import relationship
-from datetime import datetime
+from sqlalchemy import Column, Integer, String, Float, DateTime, Text, Boolean, ForeignKey # type: ignore
+from sqlalchemy.orm import relationship # type: ignore
+from datetime import datetime, timezone
 from database import Base
 
 class Stock(Base):
@@ -11,13 +11,13 @@ class Stock(Base):
     name = Column(String)                            # "BHP Group"
     sector = Column(String, nullable=True)
     
-    # Real-time data fields
+    # realtime data fields
     price = Column(Float, default=0.0)
     change_amount = Column(Float, default=0.0)
-    change_percent = Column(String, default="0%")    # keeping this as a string for now ("-1.5%")
+    change_percent = Column(String, default="0%")    # "+1.23%"
     market_cap = Column(String, nullable=True)       # "200B"
     volume = Column(String, nullable=True)
     
-    last_updated = Column(DateTime, default=datetime.utcnow)
+    last_updated = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    is_watched = Column(Boolean, default=False)
 
-    # historical prices will be tracked later in a seperate table

@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import or_ # type: ignore
+from sqlalchemy import or_, func # type: ignore
 from sqlalchemy.orm import Session # type: ignore
 from database import engine, get_db
 from ingestor import run_market_engine, is_market_open
@@ -8,14 +8,26 @@ import models
 import asyncio
 import yfinance as yf # type: ignore
 import pandas as pd
+import numpy as np 
 import feedparser # type: ignore 
 import re 
 import urllib.parse
 import requests
+import google.generativeai as genai # type: ignore
+import os
+from dotenv import load_dotenv
 from newspaper import Article, Config  # type: ignore
 from readability import Document # type: ignore
 from contextlib import asynccontextmanager
 from playwright.async_api import async_playwright
+
+load_dotenv()
+GENAI_KEY = os.getenv  ("GEMINI_API_KEY")
+
+if not GENAI_KEY:
+    print("warning - GEMINI_API_KEY isn't set") 
+
+genai.configure(api_key=GENAI_KEY)
 
 # create tables upon startup
 models.Base.metadata.create_all(bind=engine)
@@ -299,3 +311,230 @@ async def read_article(url: str):
         if browser:
             await browser.close()
         raise HTTPException(status_code=500, detail="failed to process the article")
+    
+@app.get("/stock/{ticker}/analyse")
+def analyse_stock(ticker: str):
+    """
+    gathers price, news & financials & sends to google gemini to generate a report
+    """
+    try:
+        # gather intelligence
+        news = get_stock_news(ticker) # googlenews scraper
+        financials = get_stock_financials(ticker) # yfinance fetcher
+        info = get_stock_info(ticker)
+                
+        news_context = []
+        for n in news:
+            title = n['content']['title']
+            date = n['content']['pubDate']
+            summary = n['content']['summary']
+            news_context.append(f"- [{date}] {title}\n Summary: {summary}")
+
+        news_summary = "\n".join(news_context)
+
+        # format financials
+        latest_year = sorted(financials.keys())[-1] if financials else "N/A"
+        fin_summary = f"Latest Financials ({latest_year}): {financials[latest_year]}" if financials else "Data Unavailable"
+
+        prompt = f"""
+        You are KANGAROO, a ruthless, high-frequency trading AI analyst for the ASX. 
+        Analyse {ticker} based on the provided data.
+        
+        ### COMPANY PROFILE
+        {info.get('description', '')}
+        
+        ### LATEST NEWS HEADLINES
+        {news_summary}
+        
+        ### FINANCIAL DATA
+        {fin_summary}
+        
+        ### INSTRUCTIONS
+        Write a concise, executive summary.
+        **IMPORTANT: Output your response in clean HTML format (no markdown backticks).** 
+        Use <h3> for headers, <p> for paragraphs, <ul>/<li> for lists, and <strong> for emphasis.
+        
+        Structure:
+        1. <h3>Sentiment</h3>: Bullish, Bearish, or Neutral? (Be decisive).
+        2. <h3>The Catalyst</h3>: What is the driver?
+        3. <h3>Risk Factors</h3>: What is the danger?
+        4. <h3>Verdict</h3>: One sentence conclusion.
+        
+        Keep it professional, data-driven, accurate, and under 200 words.
+        """
+
+        model = genai.GenerativeModel('gemini-3-flash-preview') # gemini-3-pro reasoning would be better but no $$, find a better free model later
+                                                                # maybe look into the AI hackatime thing
+        response = model.generate_content(prompt)
+        
+        return {"report": response.text}
+
+    except Exception as e:
+        print(f"AI Error: {e}")
+        return {"report": "## ⚠️ System Offline\nKangaroo Neural Net could not connect to the mainframe."}
+    
+@app.get("/stock/{ticker}/valuation")
+def get_stock_valuation(ticker: str):
+    """
+    fetches inputs for dcf model
+    - free cash flow
+    - acsh and equivalents
+    - total debt
+    - shares outstanding
+    - beta (risk)
+    """
+    try:
+        symbol = f"{ticker.upper()}.AX"
+        stock = yf.Ticker(symbol)
+
+        # get cash flow for fcf
+        cf = stock.cashflow
+        # nans 0 to prevent json error
+        cf = cf.fillna(0)
+        
+        # calculate fcf (recent year
+        # free cash flow = total cash from operating activities + capital expenditures
+        # capex is negative in yfinance so we add it
+        try:
+            latest_ocf = cf.loc['Operating Cash Flow'].iloc[0]
+            latest_capex = cf.loc['Capital Expenditure'].iloc[0]
+            fcf = latest_ocf + latest_capex
+        except Exception:
+            # fallback if rows missing
+            fcf = 0
+            
+        # get balance sheet (for net debt)
+        bs = stock.balance_sheet.fillna(0)
+        try:
+            total_debt = bs.loc['Total Debt'].iloc[0]
+            cash_and_equivalents = bs.loc['Cash And Cash Equivalents'].iloc[0]
+        except Exception:
+            total_debt = 0
+            cash_and_equivalents = 0
+            
+        # get key stats (shares, price)
+        info = stock.info
+        shares_outstanding = info.get('sharesOutstanding', 0)
+        beta = info.get('beta', 1.0) # default to market risk if missing
+        current_price = info.get('currentPrice', 0.0)
+        
+        return {
+            "fcf": fcf,
+            "total_debt": total_debt,
+            "cash": cash_and_equivalents,
+            "shares_outstanding": shares_outstanding,
+            "beta": beta,
+            "current_price": current_price,
+            "currency": info.get('currency', 'AUD')
+        }
+
+    except Exception as e:
+        print(f"Error fetching valuation data: {e}")
+        return {"error": "Valuation data unavailable"}
+
+@app.get("/market-movers")
+def get_market_movers(db: Session = Depends(get_db)):
+    """returns top 5 gainers & losers"""
+
+    all_stocks = db.query(models.Stock).all()
+    
+    # clean percentage string
+    def parse_change(s):
+        try:
+            return float(s.ticker.replace('%', '').replace(',', '')) if s.change_percent else 0.0
+        except:
+            try:
+                return float(str(s.change_percent).replace('%', ''))
+            except:
+                return 0.0
+
+    # sort
+    sorted_stocks = sorted(all_stocks, key=parse_change, reverse=True)
+    
+    return {
+        "gainers": sorted_stocks[:5],
+        "losers": sorted_stocks[-5:][::-1] # reverse to show worst first
+    }
+
+@app.get("/sector-performance")
+def get_sector_performance(db: Session = Depends(get_db)):
+    """
+    nested tree: sector -> stocks
+    for the heatmap
+    """
+    all_stocks = db.query(models.Stock).all()
+    
+    def parse_cap(cap_str):
+        if not cap_str: return 0.0
+        s = str(cap_str).upper().replace('$', '').replace(',', '')
+        try:
+            if 'T' in s: return float(s.replace('T', '')) * 1_000_000_000_000
+            if 'B' in s: return float(s.replace('B', '')) * 1_000_000_000
+            if 'M' in s: return float(s.replace('M', '')) * 1_000_000
+            if 'K' in s: return float(s.replace('K', '')) * 1_000
+            return float(s)
+        except:
+            return 0.0
+
+    sectors = {}
+    
+    for stock in all_stocks:
+        # filter junk data
+        if not stock.sector or stock.sector == "Unknown":
+            continue
+        
+        # parse numbers
+        try:
+            change = float(str(stock.change_percent).replace('%', ''))
+        except:
+            change = 0.0
+        
+        mcap = parse_cap(stock.market_cap)
+        
+        # filter out tiny stocks to make the map clean (skip under 100m market cap)
+        if mcap < 100_000_000: 
+            continue
+
+        if stock.sector not in sectors:
+            sectors[stock.sector] = []
+        
+        # add stock as a child
+        sectors[stock.sector].append({
+            "name": stock.ticker,
+            "size": mcap,       # box size
+            "change": change,   # box color
+            "fullName": stock.name
+        })
+    
+    # format for recharts
+    results = []
+    for sec_name, stocks in sectors.items():
+        stocks.sort(key=lambda x: x['size'], reverse=True)
+        
+        # total sector size
+        total_sector_size = sum(s['size'] for s in stocks)
+        
+        results.append({
+            "name": sec_name,
+            "children": stocks, 
+            "size": total_sector_size 
+        })
+    
+    return sorted(results, key=lambda x: x["size"], reverse=True)
+
+@app.post("/stock/{ticker}/toggle-watch")
+def toggle_watchlist(ticker: str, db: Session = Depends(get_db)):
+    """star/unstar stock"""
+    stock = db.query(models.Stock).filter(models.Stock.ticker == ticker.upper()).first()
+    if not stock:
+        raise HTTPException(status_code=404, detail="Stock not found")
+    
+    stock.is_watched = not stock.is_watched
+    db.commit()
+    
+    return {"is_watched": stock.is_watched}
+
+@app.get("/watchlist")
+def get_watchlist(db: Session = Depends(get_db)):
+    """returns watched stocks"""
+    return db.query(models.Stock).filter(models.Stock.is_watched == True).all()

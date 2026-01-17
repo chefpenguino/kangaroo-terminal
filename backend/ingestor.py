@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session # type: ignore
 from database import SessionLocal
 import models
 from scraper import ASXScraper
+import yfinance as yf # type: ignore
 
 # sydney timezone
 
@@ -27,6 +28,18 @@ def is_market_open() -> bool:
     market_close = time(16, 15) # 4:15 PM buffer
 
     return market_open <= current_time <= market_close
+
+def get_sector_info(ticker: str) -> str:
+    """
+    fetches sector from yfinance on the fly
+    used when a new stock appears in the index
+    """
+    try:
+        # add .AX suffix
+        stock = yf.Ticker(f"{ticker}.AX")
+        return stock.info.get('sector', 'Unknown')
+    except:
+        return 'Unknown'
 
 async def clean_price(price_str: str) -> float:
     """
@@ -51,10 +64,15 @@ async def update_database(data: list[dict]):
             c_val = await clean_price(item['change_amount'])
 
             if not stock:
+                # fetch sector immediately so heatmap works
+                print(f"[+] new stock found: {item['ticker']}, fetching sector...")
+                sector_name = get_sector_info(item['ticker'])
+                
                 # create new
                 stock = models.Stock(
                     ticker=item['ticker'],
                     name=item['name'],
+                    sector=sector_name, # save the fetched sector
                     price=p_val,
                     change_amount=c_val,
                     change_percent=item['change_percent'],
@@ -63,7 +81,12 @@ async def update_database(data: list[dict]):
                 )
                 db.add(stock)
             else:
-                # update existing
+                # UPDATE EXISTING
+                # self-healing: if sector is missing for some reason, fix it
+                if not stock.sector or stock.sector == "Unknown":
+                     print(f"[+] fixing missing sector for {item['ticker']}...")
+                     stock.sector = get_sector_info(item['ticker'])
+
                 stock.price = p_val
                 stock.change_amount = c_val
                 stock.change_percent = item['change_percent']
