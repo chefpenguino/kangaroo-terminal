@@ -12,3 +12,4 @@ feedparser
 newspaper3k
 lxml
 readability-lxml
+google.genai

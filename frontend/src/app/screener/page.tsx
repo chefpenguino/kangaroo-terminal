@@ -84,13 +84,13 @@ const StockContent = (props: any) => {
       <foreignObject x={x} y={y} width={width} height={height}>
         <Link href={`/stock/${name}`} className="block w-full h-full">
             <div 
-                className="w-full h-full border border-[#0F0B08] transition-all duration-200 hover:brightness-125 hover:z-50 flex flex-col items-center justify-center text-center p-0.5 overflow-hidden relative"
+                className="w-full h-full border border-background transition-all duration-200 hover:brightness-125 hover:z-50 flex flex-col items-center justify-center text-center p-0.5 overflow-hidden relative"
                 style={{ backgroundColor: bgColor }}
                 onMouseEnter={(e) => onHover({ name, fullName, change, size }, e)}
                 onMouseLeave={onLeave}
             >
                 {showLogo && (
-                    <div className={`${iconClass} shrink-0 rounded-full bg-white p-[1px] shadow-sm flex items-center justify-center overflow-hidden`}>
+                    <div className={`${iconClass} shrink-0 rounded-full bg-white p-px shadow-sm flex items-center justify-center overflow-hidden`}>
                         <img 
                             src={`https://files.marketindex.com.au/xasx/96x96-png/${name.toLowerCase()}.png`}
                             onError={(e) => (e.currentTarget.style.display = 'none')}
@@ -141,7 +141,7 @@ const SectorOverlay = (props: any) => {
         <foreignObject x={x + 2} y={y + 2} width={width - 4} height={28}>
             <div 
                 onClick={() => onSectorClick(name)}
-                className={`w-full h-full border-b border-white/10 flex items-center px-2 cursor-pointer transition-colors group pointer-events-auto ${isSelected ? "bg-[#2A1E17] text-primary" : "bg-[#1C140F] hover:bg-[#2A1E17]"}`}
+                className={`w-full h-full border-b border-white/10 flex items-center px-2 cursor-pointer transition-colors group pointer-events-auto ${isSelected ? "bg-[#2A1E17] text-primary" : "bg-surface hover:bg-[#2A1E17]"}`}
             >
                 <span className={`text-[10px] font-bold uppercase tracking-wider truncate flex items-center gap-1 ${isSelected ? "text-primary" : "text-gray-400 group-hover:text-primary"}`}>
                     {name} 
@@ -221,22 +221,22 @@ export default function ScreenerPage() {
       </div>
 
       {/* heatmap container */}
-      <div className="luxury-card p-1 rounded-2xl h-[700px] flex flex-col relative border border-white/5">
+      <div className="luxury-card p-1 rounded-2xl h-175 flex flex-col relative border border-white/5">
         
         {/* toolbar */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-[#15100d] z-20 relative rounded-t-2xl">
-            <div className="flex items-center gap-2">
-                <h2 className="text-sm font-bold text-white uppercase tracking-wider">
-                    {selectedSector ? selectedSector : "ASX 200 Heatmap"}
+        <div className="flex items-center justify-between px-4 py-4 border-b border-white/5 bg-[#15100d] z-20 relative rounded-t-2xl">
+            <div className="flex items-center">
+                <h2 className="text-s font-bold text-white tracking-widest font-instrument">
+                    {selectedSector ? selectedSector : "ASX 200 HEATMAP"}
                 </h2>
             </div>
         </div>
         
         {/* visualisation container */}
-        <div className="flex-1 min-h-0 bg-[#0F0B08] relative rounded-b-xl overflow-hidden"> 
+        <div className="flex-1 min-h-0 bg-background relative rounded-b-xl overflow-hidden"> 
             
             {/* stocks (bottom) */}
-            <div className="absolute inset-0 z-0 pt-[2px]">
+            <div className="absolute inset-0 z-0 pt-0.5">
                 <ResponsiveContainer width="100%" height="100%">
                     <Treemap
                         data={displayedMap}
@@ -277,14 +277,14 @@ export default function ScreenerPage() {
         <div className="luxury-card p-6 rounded-2xl">
             <div className="flex items-center gap-2 mb-6 border-b border-white/5 pb-4">
                 <TrendingUp size={20} className="text-success" />
-                <h2 className="text-lg font-bold text-white uppercase tracking-wider">Top Gainers</h2>
+                <h2 className="text-lg font-bold text-white uppercase tracking-wider font-instrument">Top Gainers</h2>
             </div>
             <div className="space-y-2">
                 {movers?.gainers.map((stock: any) => (
                     <Link href={`/stock/${stock.ticker}`} key={stock.ticker}>
                         <div className="flex items-center justify-between p-3 rounded-lg hover:bg-white/5 transition-colors group cursor-pointer border border-transparent hover:border-white/5">
                             <div className="flex items-center gap-3">
-                                <div className="w-8 h-8 rounded-full bg-[#0F0B08] border border-white/10 flex items-center justify-center text-xs font-bold text-white group-hover:border-success/50 transition-colors overflow-hidden relative">
+                                <div className="w-8 h-8 rounded-full bg-background border border-white/10 flex items-center justify-center text-xs font-bold text-white group-hover:border-success/50 transition-colors overflow-hidden relative">
                                     <img 
                                         src={`https://files.marketindex.com.au/xasx/96x96-png/${stock.ticker.toLowerCase()}.png`}
                                         className="w-full h-full object-cover"
@@ -294,7 +294,7 @@ export default function ScreenerPage() {
                                 </div>
                                 <div>
                                     <span className="block font-bold text-white">{stock.ticker}</span>
-                                    <span className="block text-xs text-gray-500 truncate max-w-[200px]">{stock.name}</span>
+                                    <span className="block text-xs text-gray-500 truncate max-w-50">{stock.name}</span>
                                 </div>
                             </div>
                             <div className="text-right">
@@ -313,14 +313,14 @@ export default function ScreenerPage() {
         <div className="luxury-card p-6 rounded-2xl">
             <div className="flex items-center gap-2 mb-6 border-b border-white/5 pb-4">
                 <TrendingDown size={20} className="text-danger" />
-                <h2 className="text-lg font-bold text-white uppercase tracking-wider">Top Losers</h2>
+                <h2 className="text-lg font-bold text-white uppercase tracking-wider font-instrument">Top Losers</h2>
             </div>
             <div className="space-y-2">
                 {movers?.losers.map((stock: any) => (
                     <Link href={`/stock/${stock.ticker}`} key={stock.ticker}>
                         <div className="flex items-center justify-between p-3 rounded-lg hover:bg-white/5 transition-colors group cursor-pointer border border-transparent hover:border-white/5">
                             <div className="flex items-center gap-3">
-                                <div className="w-8 h-8 rounded-full bg-[#0F0B08] border border-white/10 flex items-center justify-center text-xs font-bold text-white group-hover:border-danger/50 transition-colors overflow-hidden relative">
+                                <div className="w-8 h-8 rounded-full bg-background border border-white/10 flex items-center justify-center text-xs font-bold text-white group-hover:border-danger/50 transition-colors overflow-hidden relative">
                                     <img 
                                         src={`https://files.marketindex.com.au/xasx/96x96-png/${stock.ticker.toLowerCase()}.png`}
                                         className="w-full h-full object-cover"
@@ -330,7 +330,7 @@ export default function ScreenerPage() {
                                 </div>
                                 <div>
                                     <span className="block font-bold text-white">{stock.ticker}</span>
-                                    <span className="block text-xs text-gray-500 truncate max-w-[200px]">{stock.name}</span>
+                                    <span className="block text-xs text-gray-500 truncate max-w-50">{stock.name}</span>
                                 </div>
                             </div>
                             <div className="text-right">

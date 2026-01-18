@@ -52,10 +52,6 @@ export default function WatchlistPage() {
           </div>
           <h3 className="text-lg font-bold text-white mb-2">No stocks watched yet</h3>
           <p className="text-gray-500 mb-6">Star a stock from the Discover page to track it here.</p>
-          <Link href="/screener" className="luxury-button">
-            <Plus size={18} />
-            <span>Discover Stocks</span>
-          </Link>
         </div>
       )}
 

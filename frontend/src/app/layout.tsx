@@ -6,6 +6,7 @@ import { Search } from "lucide-react"; // icons
 import Header from "./components/Header";
 import { SidebarProvider } from "@/context/SidebarContext";
 import PageWrapper from "@/app/components/PageWrapper"
+import StatusBar from "@/app/components/StatusBar";
 
 const inter = Inter({ 
   subsets: ["latin"],
@@ -38,9 +39,11 @@ export default function RootLayout({
                 <div className="flex min-h-screen bg-background text-text">
                     <Sidebar />
                     <PageWrapper>
-                        {/* Header.tsx */}
                         <Header />
-                        {children}
+                        <div className="pb-12">
+                            {children}
+                        </div>
+                        <StatusBar />
                     </PageWrapper>
                 </div>
             </SidebarProvider>

@@ -10,7 +10,8 @@ import {
   Activity,
   ChevronLeft,
   ChevronRight,
-  Star
+  Star,
+  Briefcase
 } from "lucide-react";
 import { useSidebar } from "@/context/SidebarContext"
 
@@ -90,7 +91,7 @@ export default function Sidebar() {
     <NavItem href="/" label="Dashboard" icon={LayoutDashboard} active={pathname === "/"} layoutId="nav-highlight" collapsed={isCollapsed} />
     <NavItem href="/watchlist" label="Watchlist" icon={Star} active={pathname === "/watchlist"} layoutId="nav-highlight" collapsed={isCollapsed} />
     <NavItem href="/screener" label="Screener" icon={ScanLine} active={pathname === "/screener"} layoutId="nav-highlight" collapsed={isCollapsed} />
-    <NavItem href="/news" label="Market News" icon={Newspaper} active={pathname === "/news"} layoutId="nav-highlight" collapsed={isCollapsed} />
+    <NavItem href="/portfolio" label="Portfolio" icon={Briefcase} active={pathname === "/portfolio"} layoutId="nav-highlight" collapsed={isCollapsed} />
     
     {!isCollapsed && <div className="px-6 mb-2 mt-6 text-xs font-bold text-gray-700 uppercase tracking-wider animate-in fade-in">Intelligence</div>}
     <NavItem href="/ai" label="AI Analyst" icon={BrainCircuit} active={pathname === "/ai"} layoutId="nav-highlight" collapsed={isCollapsed} />

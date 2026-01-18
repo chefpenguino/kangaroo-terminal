@@ -13,8 +13,10 @@ import feedparser # type: ignore
 import re 
 import urllib.parse
 import requests
-import google.generativeai as genai # type: ignore
+import google.genai as genai # type: ignore
 import os
+from datetime import datetime
+from pydantic import BaseModel # Add this at top if missing
 from dotenv import load_dotenv
 from newspaper import Article, Config  # type: ignore
 from readability import Document # type: ignore
@@ -22,12 +24,12 @@ from contextlib import asynccontextmanager
 from playwright.async_api import async_playwright
 
 load_dotenv()
-GENAI_KEY = os.getenv  ("GEMINI_API_KEY")
+GENAI_KEY = os.getenv("GEMINI_API_KEY")
 
 if not GENAI_KEY:
     print("warning - GEMINI_API_KEY isn't set") 
 
-genai.configure(api_key=GENAI_KEY)
+client = genai.Client(api_key=GENAI_KEY)
 
 # create tables upon startup
 models.Base.metadata.create_all(bind=engine)
@@ -126,31 +128,37 @@ def get_stock(ticker: str, db: Session = Depends(get_db)):
 
 @app.get("/stock/{ticker}/history") 
 def get_stock_history(ticker: str, period: str = "1mo", interval: str = "1d"):
-    """
-    fetches historical data for charting
-    periods: 1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max
-    intervals: 1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk, 1mo, 3mo
-    """
     try:
-        # append .AX for australian stocks if its missing
         symbol = f"{ticker.upper()}.AX" if not ticker.endswith(".AX") else ticker.upper()
         
         stock = yf.Ticker(symbol)
         hist = stock.history(period=period, interval=interval)
-        
-        # reset the index to make date a column
         hist.reset_index(inplace=True)
         
-        # format for tradingview lightweight charts
-        # needs: { time: '2025-1-14', open: 10, high: 12, low: 9, close: 11 }
+        # --- Calculate Technical Indicators ---
+        if len(hist) > 0:
+            # 1. Simple Moving Averages
+            hist['SMA_50'] = hist['Close'].rolling(window=50).mean()
+            hist['SMA_200'] = hist['Close'].rolling(window=200).mean()
+            
+            # 2. Exponential Moving Average (Reacts faster to price)
+            hist['EMA_20'] = hist['Close'].ewm(span=20, adjust=False).mean()
+            
+            # 3. Bollinger Bands (Volatility)
+            # Middle Band = SMA 20
+            # Upper/Lower = Middle +/- 2 Std Dev
+            hist['BB_Middle'] = hist['Close'].rolling(window=20).mean()
+            std_dev = hist['Close'].rolling(window=20).std()
+            hist['BB_Upper'] = hist['BB_Middle'] + (2 * std_dev)
+            hist['BB_Lower'] = hist['BB_Middle'] - (2 * std_dev)
+            
+            # Clean NaNs
+            hist = hist.replace({float('nan'): None})
+
         data = []
         for index, row in hist.iterrows():
-            
-            # handle date formats 
             if 'Datetime' in row:
-                # intraday data uses 'Datetime' (requiring unix timestamp) 
                 t = int(row['Datetime'].timestamp())
-            # daily data uses Date and needs a YYYY-MM-DD string
             elif 'Date' in row:
                 t = row['Date'].strftime('%Y-%m-%d')
             else:
@@ -162,7 +170,12 @@ def get_stock_history(ticker: str, period: str = "1mo", interval: str = "1d"):
                 "high": row['High'],
                 "low": row['Low'],
                 "close": row['Close'],
-                "volume": row['Volume']
+                "volume": row['Volume'],
+                "sma50": row.get('SMA_50'),
+                "sma200": row.get('SMA_200'),
+                "ema20": row.get('EMA_20'),
+                "bb_upper": row.get('BB_Upper'),
+                "bb_lower": row.get('BB_Lower')
             })
             
         return data
@@ -363,10 +376,11 @@ def analyse_stock(ticker: str):
         Keep it professional, data-driven, accurate, and under 200 words.
         """
 
-        model = genai.GenerativeModel('gemini-3-flash-preview') # gemini-3-pro reasoning would be better but no $$, find a better free model later
-                                                                # maybe look into the AI hackatime thing
-        response = model.generate_content(prompt)
-        
+        response = client.models.generate_content( # gemini-3-pro reasoning would be better but no $$, find a better free model later
+            model='gemini-3-flash-preview',        # maybe look into the AI hackatime thing
+            contents=prompt
+        )
+
         return {"report": response.text}
 
     except Exception as e:
@@ -538,3 +552,180 @@ def toggle_watchlist(ticker: str, db: Session = Depends(get_db)):
 def get_watchlist(db: Session = Depends(get_db)):
     """returns watched stocks"""
     return db.query(models.Stock).filter(models.Stock.is_watched == True).all()
+
+class Transaction(BaseModel):
+    ticker: str
+    shares: int
+    price: float
+
+@app.post("/portfolio/add")
+def add_holding(tx: Transaction, db: Session = Depends(get_db)):
+    """simulated trading"""
+    # check if we already own it
+    existing = db.query(models.Holding).filter(models.Holding.ticker == tx.ticker.upper()).first()
+    
+    if existing:
+        # calculate new weighted average cost
+        total_cost = (existing.shares * existing.avg_cost) + (tx.shares * tx.price)
+        total_shares = existing.shares + tx.shares
+        existing.shares = total_shares
+        existing.avg_cost = total_cost / total_shares
+    else:
+        new_holding = models.Holding(
+            ticker=tx.ticker.upper(),
+            shares=tx.shares,
+            avg_cost=tx.price
+        )
+        db.add(new_holding)
+    
+    db.commit()
+    return {"message": "Trade executed"}
+
+@app.delete("/portfolio/{ticker}")
+def delete_holding(ticker: str, db: Session = Depends(get_db)):
+    """Simulate selling all shares"""
+    db.query(models.Holding).filter(models.Holding.ticker == ticker.upper()).delete()
+    db.commit()
+    return {"message": "Position closed"}
+
+@app.get("/portfolio")
+def get_portfolio(db: Session = Depends(get_db)):
+    """
+    returns holdings with live price data and P&L calculations
+    """
+    holdings = db.query(models.Holding).all()
+    results = []
+    
+    for h in holdings:
+        # fetch live price from stock table
+        stock = db.query(models.Stock).filter(models.Stock.ticker == h.ticker).first()
+        current_price = stock.price if stock else 0.0
+        
+        # calculate value
+        market_value = current_price * h.shares
+        cost_basis = h.avg_cost * h.shares
+        pnl = market_value - cost_basis
+        pnl_percent = (pnl / cost_basis) * 100 if cost_basis > 0 else 0
+        
+        results.append({
+            "id": h.id,
+            "ticker": h.ticker,
+            "name": stock.name if stock else "Unknown",
+            "shares": h.shares,
+            "avg_cost": h.avg_cost,
+            "current_price": current_price,
+            "market_value": market_value,
+            "pnl": pnl,
+            "pnl_percent": pnl_percent
+        })
+        
+    return results
+
+@app.get("/account")
+def get_account(db: Session = Depends(get_db)):
+    # create account if it doesn't exist
+    account = db.query(models.Account).first()
+    if not account:
+        account = models.Account(balance=100000.0)
+        db.add(account)
+        db.commit()
+    
+    # calculate total equity (cash + stock value)
+    holdings = db.query(models.Holding).all()
+    stock_value = 0.0
+    for h in holdings:
+        stock = db.query(models.Stock).filter(models.Stock.ticker == h.ticker).first()
+        current_price = stock.price if stock else h.avg_cost
+        stock_value += h.shares * current_price
+
+    return {
+        "cash": account.balance,
+        "stock_value": stock_value,
+        "total_equity": account.balance + stock_value,
+        "buying_power": account.balance # for now, 1:1 leverage
+    }
+
+class Order(BaseModel):
+    ticker: str
+    shares: int
+    price: float # limit price or current price
+    type: str # "BUY" or "SELL"
+
+@app.post("/trade")
+def execute_trade(order: Order, db: Session = Depends(get_db)):
+    """
+    executes a trade with validation:
+    checks market hours
+    checks sufficient funds
+    updates portfolio cost basis
+    updates 'last price' 
+    """
+
+    # market always open for the sake of testing; uncomment this later
+    # if not is_market_open():
+    #     raise HTTPException(status_code=400, detail="Market is Closed. Orders cannot be executed.")
+
+    account = db.query(models.Account).first()
+    if not account:
+        account = models.Account(balance=100000.0)
+        db.add(account)
+    
+    total_cost = order.shares * order.price
+
+    if order.type == "BUY":
+        if account.balance < total_cost:
+            raise HTTPException(status_code=400, detail=f"Insufficient Buying Power. Cost: ${total_cost}, Available: ${account.balance}")
+        
+        # deduct cash
+        account.balance -= total_cost
+        
+        # update holding
+        holding = db.query(models.Holding).filter(models.Holding.ticker == order.ticker).first()
+        if holding:
+            # weighted average cost logic
+            current_total_value = holding.shares * holding.avg_cost
+            new_total_value = current_total_value + total_cost
+            total_shares = holding.shares + order.shares
+            
+            holding.shares = total_shares
+            holding.avg_cost = new_total_value / total_shares
+        else:
+            new_holding = models.Holding(ticker=order.ticker, shares=order.shares, avg_cost=order.price)
+            db.add(new_holding)
+
+    elif order.type == "SELL":
+        holding = db.query(models.Holding).filter(models.Holding.ticker == order.ticker).first()
+        if not holding or holding.shares < order.shares:
+            raise HTTPException(status_code=400, detail="Insufficient Shares")
+        
+        # add cash
+        account.balance += total_cost
+        
+        # deduct shares
+        holding.shares -= order.shares
+        if holding.shares == 0:
+            db.delete(holding)
+
+    # update the stock price
+    # we assume the trade executed at the provided price, so that IS the latest market price.
+    stock = db.query(models.Stock).filter(models.Stock.ticker == order.ticker).first()
+    if stock:
+        stock.price = order.price
+        stock.last_updated = datetime.utcnow()
+
+    # record history
+    tx = models.TransactionHistory(
+        ticker=order.ticker, 
+        type=order.type, 
+        shares=order.shares, 
+        price=order.price
+    )
+    db.add(tx)
+    db.commit()
+    
+    return {"message": "Order Filled", "new_balance": account.balance}
+
+@app.get("/transactions")
+def get_transactions(db: Session = Depends(get_db)):
+    """Get the last 20 trades for the status bar"""
+    return db.query(models.TransactionHistory).order_by(models.TransactionHistory.timestamp.desc()).limit(20).all()

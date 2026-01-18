@@ -1,9 +1,9 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Loader2, ArrowDownRight, X, ExternalLink, BrainCircuit, Calculator, Star } from "lucide-react";
+import { ArrowLeft, Loader2, ArrowDownRight, X, ExternalLink, BrainCircuit, Calculator, Star, ChevronDown, Layers } from "lucide-react";
 import Link from "next/link";
-import { createChart, ColorType, CandlestickSeries, HistogramSeries } from 'lightweight-charts';
+import { createChart, ColorType, CandlestickSeries, HistogramSeries, LineSeries } from 'lightweight-charts';
 
 // format relative time (eg 2h ago)
 function timeAgo(dateString: string) {
@@ -80,6 +80,97 @@ function processFinancials(data: any) {
   return { years, rows };
 }
 
+// --- ORDER TICKET COMPONENT ---
+const OrderTicket = ({ ticker, currentPrice, onTrade }: any) => {
+    const [type, setType] = useState("BUY"); // BUY | SELL
+    const [shares, setShares] = useState(1);
+    const [loading, setLoading] = useState(false);
+
+    const total = shares * currentPrice;
+
+    const executeOrder = async () => {
+        setLoading(true);
+        try {
+            const res = await fetch("http://localhost:8000/trade", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ticker, shares, price: currentPrice, type })
+            });
+            if (res.ok) {
+                onTrade(); // Refresh parent data
+                alert(`${type} Order Filled!`);
+            } else {
+                const err = await res.json();
+                alert(`Error: ${err.detail}`);
+            }
+        } catch(e) {
+            console.error(e);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <div className="bg-surface border border-white/10 rounded-xl p-6 h-full flex flex-col">
+            <div className="flex bg-black/20 p-1 rounded-lg mb-6">
+                <button 
+                    onClick={() => setType("BUY")}
+                    className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${type === "BUY" ? "bg-success text-white shadow-lg" : "text-gray-500 hover:text-white"}`}
+                >
+                    BUY
+                </button>
+                <button 
+                    onClick={() => setType("SELL")}
+                    className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${type === "SELL" ? "bg-danger text-white shadow-lg" : "text-gray-500 hover:text-white"}`}
+                >
+                    SELL
+                </button>
+            </div>
+
+            {/* Price Display */}
+            <div className="flex justify-between items-center mb-6">
+                <span className="text-gray-400 text-sm">Market Price</span>
+                <span className="text-2xl font-bold text-white font-mono">${currentPrice.toFixed(2)}</span>
+            </div>
+
+            {/* Inputs */}
+            <div className="space-y-4 mb-8">
+                <div>
+                    <label className="block text-[10px] uppercase font-bold text-gray-500 mb-1">Shares</label>
+                    <div className="flex items-center gap-2">
+                        <input 
+                            type="number" min="1"
+                            value={shares}
+                            onChange={(e) => setShares(parseInt(e.target.value) || 0)}
+                            className="w-full bg-black/20 border border-white/10 rounded-lg p-3 text-white font-mono focus:border-primary outline-none"
+                        />
+                    </div>
+                </div>
+                
+                <div className="pt-4 border-t border-white/5">
+                    <div className="flex justify-between items-center">
+                        <span className="text-sm font-bold text-gray-400">Est. Total</span>
+                        <span className="text-xl font-bold text-white font-mono">${total.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+                    </div>
+                </div>
+            </div>
+
+            {/* Action Button */}
+            <button 
+                onClick={executeOrder}
+                className={`w-full py-4 rounded-xl font-bold text-lg tracking-wide shadow-lg transition-all hover:scale-[1.02] active:scale-[0.98] ${
+                    type === "BUY" 
+                    ? "bg-success hover:bg-green-600 text-white shadow-green-900/20" 
+                    : "bg-danger hover:bg-red-600 text-white shadow-red-900/20"
+                }`}
+            >
+                {loading ? <Loader2 className="animate-spin mx-auto" /> : `${type} ${ticker}`}
+            </button>
+        </div>
+    );
+};
+
+
 export default function StockDetail() {
   const params = useParams();
   const ticker = params.ticker as string; // eg "BHP"
@@ -101,7 +192,24 @@ export default function StockDetail() {
   const [discountRate, setDiscountRate] = useState(10); // 10% discount
   const [terminalMultiple, setTerminalMultiple] = useState(10); // 10x exit multiple
   const [isWatched, setIsWatched] = useState(false);
-
+  const [rightPanel, setRightPanel] = useState("info"); // Changed from "trade"
+  
+  // Indicator State
+  const [indicators, setIndicators] = useState({
+    sma50: false,
+    sma200: false,
+    ema20: false,
+    bollinger: false
+  });
+  
+  // Toggle Helper
+  const toggleIndicator = (key: string) => {
+    setIndicators(prev => ({ ...prev, [key]: !prev[key as keyof typeof prev] }));
+  };
+  
+  // UI State for the dropdown menu
+  const [showIndicatorMenu, setShowIndicatorMenu] = useState(false);
+  
   const timeframes = [
     { label: '1D', period: '1d', interval: '5m' },
     { label: '1W', period: '5d', interval: '15m' },
@@ -158,6 +266,7 @@ export default function StockDetail() {
   useEffect(() => {
     if (!data.length || !chartContainerRef.current) return;
 
+    // 1. Create Chart
     const chart = createChart(chartContainerRef.current, {
       layout: {
         background: { type: ColorType.Solid, color: '#0F0B08' },
@@ -169,11 +278,10 @@ export default function StockDetail() {
       },
       width: chartContainerRef.current.clientWidth,
       height: 400,
-      // main price scale 
       rightPriceScale: {
         scaleMargins: {
-          top: 0.1, // leave space at top
-          bottom: 0.2, // leave space at bottom for volume
+          top: 0.1,
+          bottom: 0.2,
         },
         borderColor: 'rgba(255, 255, 255, 0.1)',
       },
@@ -182,7 +290,7 @@ export default function StockDetail() {
       },
     });
 
-    // candles
+    // 2. Candlesticks
     const candlestickSeries = chart.addSeries(CandlestickSeries, {
       upColor: '#4E9F76', 
       downColor: '#D65A5A', 
@@ -192,29 +300,53 @@ export default function StockDetail() {
     });
     candlestickSeries.setData(data);
 
-    // volume
+    // 3. Volume
     const volumeSeries = chart.addSeries(HistogramSeries, {
       priceFormat: { type: 'volume' },
-      priceScaleId: '', // overlay
+      priceScaleId: '', 
     });
-
+    
     chart.priceScale('').applyOptions({
-      scaleMargins: {
-        top: 0.8, // volume @ the bottom 20%
-        bottom: 0,
-      },
+      scaleMargins: { top: 0.8, bottom: 0 },
     });
 
-    // color code volume: green if up day, red if down day
     const volumeData = data.map((d: any) => ({
       time: d.time,
       value: d.volume,
       color: d.close >= d.open ? 'rgba(78, 159, 118, 0.3)' : 'rgba(214, 90, 90, 0.3)',
     }));
-    
     volumeSeries.setData(volumeData);
 
-    // responsive resize
+    // indicators
+
+    // SMA 50 (Blue)
+    if (indicators.sma50) {
+        const lineSeries = chart.addSeries(LineSeries, { color: '#2962FF', lineWidth: 2, title: 'SMA 50' });
+        lineSeries.setData(data.filter((d: any) => d.sma50).map((d: any) => ({ time: d.time, value: d.sma50 })));
+    }
+
+    // SMA 200 (Orange)
+    if (indicators.sma200) {
+        const lineSeries = chart.addSeries(LineSeries, { color: '#FF6D00', lineWidth: 2, title: 'SMA 200' });
+        lineSeries.setData(data.filter((d: any) => d.sma200).map((d: any) => ({ time: d.time, value: d.sma200 })));
+    }
+
+    // EMA 20 (Cyan)
+    if (indicators.ema20) {
+        const lineSeries = chart.addSeries(LineSeries, { color: '#00E5FF', lineWidth: 1, title: 'EMA 20' });
+        lineSeries.setData(data.filter((d: any) => d.ema20).map((d: any) => ({ time: d.time, value: d.ema20 })));
+    }
+
+    // Bollinger Bands (Purple Area)
+    if (indicators.bollinger) {
+        const upper = chart.addSeries(LineSeries, { color: 'rgba(157, 78, 221, 0.5)', lineWidth: 1 });
+        const lower = chart.addSeries(LineSeries, { color: 'rgba(157, 78, 221, 0.5)', lineWidth: 1 });
+        
+        upper.setData(data.filter((d: any) => d.bb_upper).map((d: any) => ({ time: d.time, value: d.bb_upper })));
+        lower.setData(data.filter((d: any) => d.bb_lower).map((d: any) => ({ time: d.time, value: d.bb_lower })));
+    }
+
+    // resize logic
     const handleResize = () => {
         if(chartContainerRef.current) {
             chart.applyOptions({ width: chartContainerRef.current.clientWidth });
@@ -226,7 +358,7 @@ export default function StockDetail() {
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };
-  }, [data]);
+  }, [data, indicators]); // re-render upon indicator change
 
   const openArticle = async (url: string) => {
     if (!url) return;
@@ -373,10 +505,50 @@ export default function StockDetail() {
         {/* chart */}
         <div className="lg:col-span-2 luxury-card p-4 rounded-xl relative flex flex-col">
           {/* toolbar heading */}
-          <div className="flex justify-between items-center mb-4 border-b border-white/5 pb-2">
-            <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider">
-              Price Action <span className="text-primary">({activeTf.label})</span>
-            </h3>
+            <div className="flex justify-between items-center mb-4 border-b border-white/5 pb-2 relative z-20">
+                
+                <div className="flex items-center gap-4">
+                    <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider">
+                        Price Action <span className="text-primary">({activeTf.label})</span>
+                    </h3>
+                    
+                    {/* indicator dropdown */}
+                    <div className="relative">
+                        <button 
+                            onClick={() => setShowIndicatorMenu(!showIndicatorMenu)}
+                            className="flex items-center gap-1 text-[10px] font-bold px-3 py-1.5 rounded-lg border border-white/10 hover:border-primary/50 text-gray-400 hover:text-white transition-all"
+                        >
+                            Indicators
+                            <ChevronDown size={10} />
+                        </button>
+
+                        {/* the menu */}
+                        {showIndicatorMenu && (
+                            <div className="absolute top-full left-0 mt-2 w-48 bg-surface border border-white/10 rounded-xl shadow-2xl p-2 z-50 flex flex-col gap-1 backdrop-blur-xl">
+                                <p className="text-[10px] uppercase font-bold text-gray-500 px-2 py-1">Trend</p>
+                                <button onClick={() => toggleIndicator('sma50')} className="flex items-center justify-between px-2 py-1.5 rounded hover:bg-white/5 text-xs text-gray-300 hover:text-white">
+                                    <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#2962FF]"></div> SMA 50</div>
+                                    {indicators.sma50 && <span className="text-primary">✓</span>}
+                                </button>
+                                <button onClick={() => toggleIndicator('sma200')} className="flex items-center justify-between px-2 py-1.5 rounded hover:bg-white/5 text-xs text-gray-300 hover:text-white">
+                                    <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#FF6D00]"></div> SMA 200</div>
+                                    {indicators.sma200 && <span className="text-primary">✓</span>}
+                                </button>
+                                <button onClick={() => toggleIndicator('ema20')} className="flex items-center justify-between px-2 py-1.5 rounded hover:bg-white/5 text-xs text-gray-300 hover:text-white">
+                                    <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#00E5FF]"></div> EMA 20</div>
+                                    {indicators.ema20 && <span className="text-primary">✓</span>}
+                                </button>
+                                
+                                <div className="h-px bg-white/10 my-1"></div>
+                                <p className="text-[10px] uppercase font-bold text-gray-500 px-2 py-1">Volatility</p>
+                                <button onClick={() => toggleIndicator('bollinger')} className="flex items-center justify-between px-2 py-1.5 rounded hover:bg-white/5 text-xs text-gray-300 hover:text-white">
+                                    <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[rgba(157,78,221,1)]"></div> Bollinger</div>
+                                    {indicators.bollinger && <span className="text-primary">✓</span>}
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </div>
             
             {/* timeframe buttons */}
             <div className="flex bg-background/50 border border-white/5 rounded-xl p-1 gap-1">
@@ -386,7 +558,7 @@ export default function StockDetail() {
                   onClick={() => setActiveTf(tf)}
                   className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-300 ${ // remember prvious rounded-md
                     activeTf.label === tf.label
-                      ? "luxury-toggle-active" // NEW 3D STYLE
+                      ? "luxury-toggle-active"
                       : "text-gray-500 hover:text-primary hover:bg-white/5"
                   }`}
                 >
@@ -402,47 +574,86 @@ export default function StockDetail() {
                 <Loader2 className="animate-spin text-primary" size={32} />
               </div>
             )}
+
+            {/* legend overlay */}
+            <div className="absolute top-2 left-2 z-10 flex flex-col gap-1 pointer-events-none">
+                {indicators.sma50 && <div className="text-[10px] font-mono text-[#2962FF]">SMA 50</div>}
+                {indicators.sma200 && <div className="text-[10px] font-mono text-[#FF6D00]">SMA 200</div>}
+                {indicators.ema20 && <div className="text-[10px] font-mono text-[#00E5FF]">EMA 20</div>}
+                {indicators.bollinger && <div className="text-[10px] font-mono text-[rgba(157,78,221,1)]">Bollinger Bands (20, 2)</div>}
+            </div>
+
             {/* chart container */}
             <div ref={chartContainerRef} className="absolute inset-0 w-full h-full" />
           </div>
         </div>
 
-        {/* company profile */}
-        <div className="luxury-card p-6 rounded-xl overflow-y-auto custom-scrollbar">
-          <h3 className="text-lg font-bold text-white mb-4">About {ticker.toUpperCase()}</h3>
+          {/* right column: trade & info panel */}
+                  <div className="luxury-card p-6 rounded-xl flex flex-col h-full">
+                      
+                      {/* panel tabs */}
+                      <div className="flex gap-2 mb-6 p-1 bg-black/20 rounded-lg border border-white/5">
+                          <button 
+                              onClick={() => setRightPanel("info")}
+                              className={`flex-1 py-1.5 text-xs font-bold uppercase tracking-wider rounded-md transition-all ${rightPanel === "info" ? "bg-white/10 text-white shadow-sm" : "text-gray-500 hover:text-gray-300"}`}
+                          >
+                              Company Info
+                          </button>
+                          <button 
+                              onClick={() => setRightPanel("trade")}
+                              className={`flex-1 py-1.5 text-xs font-bold uppercase tracking-wider rounded-md transition-all ${rightPanel === "trade" ? "bg-white/10 text-white shadow-sm" : "text-gray-500 hover:text-gray-300"}`}
+                          >
+                              Trade
+                          </button>
+                      </div>
 
-          {companyInfo ? (
-            <div className="space-y-6">
-              <p className="text-gray-400 text-sm leading-relaxed text-justify">
-                {companyInfo.description}
-              </p>
-              <div className="grid grid-cols-2 gap-4 pt-4 border-t border-white/5">
-                <div>
-                  <p className="text-xs text-gray-500 uppercase">Industry</p>
-                  <p className="text-sm text-white font-medium">{companyInfo.industry}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500 uppercase">Employees</p>
-                  <p className="text-sm text-white font-medium">{companyInfo.employees?.toLocaleString() || "N/A"}</p>
-                </div>
-                <div className="col-span-2">
-                  <p className="text-xs text-gray-500 uppercase">Website</p>
-                  <a href={companyInfo.website} target="_blank" className="text-sm text-primary hover:underline truncate block">{companyInfo.website}</a>
-                </div>
+                      {/* content area */}
+                      <div className="flex-1 overflow-y-auto custom-scrollbar">
+                          {rightPanel === "trade" ? (
+                              <OrderTicket 
+                                  ticker={ticker} 
+                                  // get latest price from history data
+                                  currentPrice={data.length > 0 ? data[data.length - 1].close : 0}
+                                  onTrade={() => { /* placeholder */ }}
+                              />
+                          ) : (
+                              <>
+                                  <h3 className="text-lg font-bold text-white mb-4">About {ticker.toUpperCase()}</h3>
+                                  {companyInfo ? (
+                                      <div className="space-y-6">
+                                          <p className="text-gray-400 text-sm leading-relaxed text-justify">
+                                              {companyInfo.description}
+                                          </p>
+                                          <div className="grid grid-cols-2 gap-4 pt-4 border-t border-white/5">
+                                              <div>
+                                                  <p className="text-xs text-gray-500 uppercase">Industry</p>
+                                                  <p className="text-sm text-white font-medium">{companyInfo.industry}</p>
+                                              </div>
+                                              <div>
+                                                  <p className="text-xs text-gray-500 uppercase">Employees</p>
+                                                  <p className="text-sm text-white font-medium">{companyInfo.employees?.toLocaleString() || "N/A"}</p>
+                                              </div>
+                                              <div className="col-span-2">
+                                                  <p className="text-xs text-gray-500 uppercase">Website</p>
+                                                  <a href={companyInfo.website} target="_blank" className="text-sm text-primary hover:underline truncate block">{companyInfo.website}</a>
+                                              </div>
+                                          </div>
+                                      </div>
+                                  ) : (
+                                      <div className="space-y-4 animate-pulse">
+                                          <div className="h-4 bg-white/5 rounded w-3/4"></div>
+                                          <div className="h-4 bg-white/5 rounded w-full"></div>
+                                          <div className="h-4 bg-white/5 rounded w-5/6"></div>
+                                      </div>
+                                        )}
+                                    </>
+                                )}
+                            </div>
+                        </div>
               </div>
-            </div>
-          ) : (
-            // loading skeleton
-            <div className="space-y-4 animate-pulse">
-              <div className="h-4 bg-white/5 rounded w-3/4"></div>
-              <div className="h-4 bg-white/5 rounded w-full"></div>
-              <div className="h-4 bg-white/5 rounded w-5/6"></div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* tabbed data */}
+      
+            {/* tabbed data */}
+      
       <div className="mt-8">
         {/* tab buttons */}
         <div className="flex gap-6 border-b border-white/5 mb-6">
