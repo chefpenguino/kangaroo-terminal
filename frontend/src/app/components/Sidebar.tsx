@@ -11,7 +11,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Star,
-  Briefcase
+  Briefcase,
+  Globe
 } from "lucide-react";
 import { useSidebar } from "@/context/SidebarContext"
 
@@ -86,15 +87,14 @@ export default function Sidebar() {
 
     {/* nav links */}
     <nav className="flex-1 mt-4">
-    {!isCollapsed && <div className="px-6 mb-2 text-xs font-bold text-gray-700 uppercase tracking-wider animate-in fade-in">Menu</div>}
+    {!isCollapsed && <div className="px-6 mb-2 text-xs font-bold text-gray-700 uppercase tracking-wider animate-in fade-in">Main</div>}
     
     <NavItem href="/" label="Dashboard" icon={LayoutDashboard} active={pathname === "/"} layoutId="nav-highlight" collapsed={isCollapsed} />
     <NavItem href="/watchlist" label="Watchlist" icon={Star} active={pathname === "/watchlist"} layoutId="nav-highlight" collapsed={isCollapsed} />
     <NavItem href="/screener" label="Screener" icon={ScanLine} active={pathname === "/screener"} layoutId="nav-highlight" collapsed={isCollapsed} />
+
+    {!isCollapsed && <div className="px-6 mb-2 mt-6 text-xs font-bold text-gray-700 uppercase tracking-wider animate-in fade-in">Trade</div>}
     <NavItem href="/portfolio" label="Portfolio" icon={Briefcase} active={pathname === "/portfolio"} layoutId="nav-highlight" collapsed={isCollapsed} />
-    
-    {!isCollapsed && <div className="px-6 mb-2 mt-6 text-xs font-bold text-gray-700 uppercase tracking-wider animate-in fade-in">Intelligence</div>}
-    <NavItem href="/ai" label="AI Analyst" icon={BrainCircuit} active={pathname === "/ai"} layoutId="nav-highlight" collapsed={isCollapsed} />
     </nav>
 
     {/* status */}

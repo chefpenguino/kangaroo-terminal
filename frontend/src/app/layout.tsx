@@ -7,6 +7,7 @@ import Header from "./components/Header";
 import { SidebarProvider } from "@/context/SidebarContext";
 import PageWrapper from "@/app/components/PageWrapper"
 import StatusBar from "@/app/components/StatusBar";
+import { Toaster } from "sonner";
 
 const inter = Inter({ 
   subsets: ["latin"],
@@ -46,6 +47,22 @@ export default function RootLayout({
                         <StatusBar />
                     </PageWrapper>
                 </div>
+                    <Toaster 
+                        position="bottom-right" 
+                        theme="dark" 
+                        toastOptions={{
+                            style: {
+                                background: '#0F0B08', 
+                                border: '1px solid rgba(198, 142, 86, 0.4)', 
+                                color: '#EBE3DB',
+                                boxShadow: '0 0 25px rgba(198, 142, 86, 0.15), 0 4px 10px rgba(0,0,0,0.5)', 
+                                borderRadius: '12px',
+                                padding: '16px',
+                                fontSize: '13px'
+                            },
+                            className: 'font-sans'
+                        }}
+                    />
             </SidebarProvider>
             </body>
         </html>

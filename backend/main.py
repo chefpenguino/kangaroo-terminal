@@ -133,26 +133,23 @@ def get_stock_history(ticker: str, period: str = "1mo", interval: str = "1d"):
         
         stock = yf.Ticker(symbol)
         hist = stock.history(period=period, interval=interval)
-        hist.reset_index(inplace=True)
+        hist.reset_index(inplace=True) 
         
-        # --- Calculate Technical Indicators ---
+        # check for invalid stock
+        if hist.empty:
+            raise HTTPException(status_code=404, detail="Stock not found or delisted")
+        
+        # calculate technical indicators
         if len(hist) > 0:
-            # 1. Simple Moving Averages
             hist['SMA_50'] = hist['Close'].rolling(window=50).mean()
             hist['SMA_200'] = hist['Close'].rolling(window=200).mean()
-            
-            # 2. Exponential Moving Average (Reacts faster to price)
             hist['EMA_20'] = hist['Close'].ewm(span=20, adjust=False).mean()
             
-            # 3. Bollinger Bands (Volatility)
-            # Middle Band = SMA 20
-            # Upper/Lower = Middle +/- 2 Std Dev
             hist['BB_Middle'] = hist['Close'].rolling(window=20).mean()
             std_dev = hist['Close'].rolling(window=20).std()
             hist['BB_Upper'] = hist['BB_Middle'] + (2 * std_dev)
             hist['BB_Lower'] = hist['BB_Middle'] - (2 * std_dev)
             
-            # Clean NaNs
             hist = hist.replace({float('nan'): None})
 
         data = []
@@ -179,10 +176,16 @@ def get_stock_history(ticker: str, period: str = "1mo", interval: str = "1d"):
             })
             
         return data
+
+    # re-raise 404s
+    except HTTPException as http_e:
+        raise http_e
+    
+    # 500
     except Exception as e:
         print(f"error fetching the history: {e}")
         raise HTTPException(status_code=500, detail="failed to fetch the history")
-
+    
 @app.get("/stock/{ticker}/info")
 def get_stock_info(ticker: str):
     """gets static company profile data (description, sector, industry, website)"""
@@ -611,6 +614,7 @@ def get_portfolio(db: Session = Depends(get_db)):
             "id": h.id,
             "ticker": h.ticker,
             "name": stock.name if stock else "Unknown",
+            "sector": stock.sector if stock else "Unknown", 
             "shares": h.shares,
             "avg_cost": h.avg_cost,
             "current_price": current_price,
@@ -620,6 +624,143 @@ def get_portfolio(db: Session = Depends(get_db)):
         })
         
     return results
+
+@app.get("/portfolio/analytics")
+def get_portfolio_analytics(db: Session = Depends(get_db)):
+    """
+    returns breakdown of portfolio by sector & asset class
+    """
+    holdings = db.query(models.Holding).all()
+    
+    sector_exposure = {}
+    total_equity = 0.0
+    
+    for h in holdings:
+        stock = db.query(models.Stock).filter(models.Stock.ticker == h.ticker).first()
+        current_price = stock.price if stock else h.avg_cost
+        market_value = h.shares * current_price
+        
+        sector = stock.sector if stock and stock.sector else "Cash/Unknown"
+        
+        if sector not in sector_exposure:
+            sector_exposure[sector] = 0.0
+        
+        sector_exposure[sector] += market_value
+        total_equity += market_value
+    
+    # calculate percentages
+    results = []
+    for sec, value in sector_exposure.items():
+        results.append({
+            "name": sec,
+            "value": round(value, 2),
+            "percent": round((value / total_equity) * 100, 2) if total_equity > 0 else 0
+        })
+        
+    return sorted(results, key=lambda x: x["value"], reverse=True)
+
+# risk analysis endpoints
+@app.get("/portfolio/risk")
+def get_portfolio_risk(db: Session = Depends(get_db)):
+    """
+    Calculates Portfolio Beta and Correlation Matrix.
+    This is computationally expensive, so it might take a few seconds.
+    """
+    try:
+        holdings = db.query(models.Holding).all()
+        if not holdings:
+            return {"error": "No holdings to analyze"}
+
+        tickers = [h.ticker for h in holdings]
+        # add the benchmark (asx200)
+        tickers.append("^AXJO")
+        
+        # add .AX suffix for aussie stocks (except the index)
+        yf_tickers = [f"{t}.AX" if not t.startswith("^") else t for t in tickers]
+        
+        # fetch 1y of history for all assets
+        data = yf.download(yf_tickers, period="1y", interval="1d", progress=False)['Close']
+        
+        if data.empty:
+            return {"error": "Could not fetch data"}
+
+        # calculate daily returns (percentage change)
+        returns = data.pct_change().dropna()
+        
+        # calculate correlation
+        corr_matrix = returns.corr()
+        
+        # format correlation for frontend heatmap
+        correlation_data = []
+        clean_tickers = [t.replace(".AX", "") for t in tickers] # Remove .AX for display
+        
+        for i, tick_x in enumerate(clean_tickers):
+            # don't show index in correlation map
+            if tick_x == "^AXJO": continue
+            
+            for j, tick_y in enumerate(clean_tickers):
+                if tick_y == "^AXJO": continue
+                
+                # yfinance uses the .AX names in the columns
+                col_x = f"{tick_x}.AX" if tick_x != "^AXJO" else "^AXJO"
+                col_y = f"{tick_y}.AX" if tick_y != "^AXJO" else "^AXJO"
+                
+                try:
+                    val = corr_matrix.loc[col_x, col_y]
+                    correlation_data.append({
+                        "x": tick_x,
+                        "y": tick_y,
+                        "value": round(val, 2)
+                    })
+                except KeyError:
+                    continue
+
+        # calculate portfolio beta 
+        # beta = covariance(portfolio, market) / variance(market)
+        
+        market_returns = returns["^AXJO"]
+        portfolio_beta = 0.0
+        total_value = 0.0
+        
+        # calculate current total value to get weights
+        holding_values = {}
+        for h in holdings:
+            # use the last available price in our downloaded data
+            try:
+                last_price = data[f"{h.ticker}.AX"].iloc[-1]
+                val = h.shares * last_price
+                holding_values[h.ticker] = val
+                total_value += val
+            except:
+                continue
+                
+        # weighted beta sum
+        stock_betas = []
+        for h in holdings:
+            if h.ticker not in holding_values: continue
+            
+            col = f"{h.ticker}.AX"
+            # stock beta vs market
+            # covariance of stock vs market / varaince of market
+            cov = returns[[col, "^AXJO"]].cov().iloc[0, 1]
+            var = market_returns.var()
+            beta = cov / var
+            
+            weight = holding_values[h.ticker] / total_value
+            portfolio_beta += beta * weight
+            
+            stock_betas.append({"ticker": h.ticker, "beta": round(beta, 2)})
+
+        return {
+            "portfolio_beta": round(portfolio_beta, 2),
+            "stock_betas": stock_betas,
+            "correlation_matrix": correlation_data,
+            "risk_level": "High" if portfolio_beta > 1.3 else "Low" if portfolio_beta < 0.8 else "Moderate"
+        }
+
+    except Exception as e:
+        print(f"Risk analysis error: {e}")
+        return {"error": str(e)}
 
 @app.get("/account")
 def get_account(db: Session = Depends(get_db)):
@@ -729,3 +870,236 @@ def execute_trade(order: Order, db: Session = Depends(get_db)):
 def get_transactions(db: Session = Depends(get_db)):
     """Get the last 20 trades for the status bar"""
     return db.query(models.TransactionHistory).order_by(models.TransactionHistory.timestamp.desc()).limit(20).all()
+
+# backtesting stuff 
+
+class BacktestRequest(BaseModel):
+    ticker: str
+    strategy: str # "SMA_CROSS", "RSI_REVERSAL"
+    initial_capital: float = 10000.0
+    # strategy parameters
+    param1: int = 50  # eg short window / lower RSI
+    param2: int = 200 # eg long window / upper RSI
+
+@app.post("/backtest/run")
+def run_backtest(req: BacktestRequest):
+    try:
+        symbol = f"{req.ticker.upper()}.AX"
+        stock = yf.Ticker(symbol)
+        # fetch 2y data
+        hist = stock.history(period="2y", interval="1d")
+        
+        if hist.empty:
+            raise HTTPException(status_code=404, detail="No data found")
+            
+        hist['Close'] = hist['Close'].fillna(method='ffill')
+        hist['Signal'] = 0 
+        
+        # GOLDEN CROSS (Trend Following)
+        if req.strategy == "SMA_CROSS":
+            hist['Short_MA'] = hist['Close'].rolling(window=req.param1).mean()
+            hist['Long_MA'] = hist['Close'].rolling(window=req.param2).mean()
+            hist['Signal'] = np.where(hist['Short_MA'] > hist['Long_MA'], 1, 0)
+            hist['Position'] = hist['Signal'].diff()
+            
+        # RSI REVERSAL (Mean Reversion)
+        elif req.strategy == "RSI_REVERSAL":
+            delta = hist['Close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            rs = gain / loss
+            hist['RSI'] = 100 - (100 / (1 + rs))
+            
+            hist['Position'] = 0
+            hist.loc[hist['RSI'] < req.param1, 'Position'] = 1  # Buy Oversold
+            hist.loc[hist['RSI'] > req.param2, 'Position'] = -1 # Sell Overbought
+
+        # MACD CROSSOVER (Momentum)
+        elif req.strategy == "MACD":
+            # standard 12-26-9 settings
+            ema12 = hist['Close'].ewm(span=12, adjust=False).mean()
+            ema26 = hist['Close'].ewm(span=26, adjust=False).mean()
+            macd = ema12 - ema26
+            signal_line = macd.ewm(span=9, adjust=False).mean()
+            
+            hist['Signal'] = np.where(macd > signal_line, 1, 0)
+            hist['Position'] = hist['Signal'].diff()
+
+        # BOLLINGER BREAKOUT (Volatility)
+        elif req.strategy == "BB_BREAKOUT":
+            sma20 = hist['Close'].rolling(window=20).mean()
+            std = hist['Close'].rolling(window=20).std()
+            upper = sma20 + (2 * std)
+            lower = sma20 - (2 * std)
+            
+            hist['Position'] = 0
+            # buy when price closes above upper band (breakout)
+            hist.loc[hist['Close'] > upper, 'Position'] = 1
+            # sell when price closes below moving average (trend ends)
+            hist.loc[hist['Close'] < sma20, 'Position'] = -1
+
+        # RATE OF CHANGE (Pure Momentum)
+        elif req.strategy == "MOMENTUM":
+            # param1 = lookback period (eg 10d)
+            hist['ROC'] = hist['Close'].pct_change(periods=req.param1) * 100
+            
+            hist['Position'] = 0
+            # buy if momentum is positive
+            hist.loc[hist['ROC'] > 0, 'Position'] = 1
+            hist.loc[hist['ROC'] < 0, 'Position'] = -1
+
+        trades = []
+        cash = req.initial_capital
+        holdings = 0
+        equity_curve = []
+        peak_equity = req.initial_capital
+        max_drawdown = 0.0
+        
+        for date, row in hist.iterrows():
+            price = row['Close']
+            signal = row.get('Position', 0)
+            
+            # execute buy
+            if signal == 1 and cash > price:
+                shares_to_buy = int(cash // price)
+                cost = shares_to_buy * price
+                cash -= cost
+                holdings += shares_to_buy
+                trades.append({
+                    "date": date.strftime('%Y-%m-%d'),
+                    "type": "BUY",
+                    "price": price,
+                    "shares": shares_to_buy
+                })
+            
+            # execute sell
+            elif signal == -1 and holdings > 0:
+                revenue = holdings * price
+                cash += revenue
+                
+                last_buy = next((t for t in reversed(trades) if t['type'] == 'BUY'), None)
+                profit = revenue - (last_buy['price'] * holdings) if last_buy else 0
+                
+                holdings = 0
+                trades.append({
+                    "date": date.strftime('%Y-%m-%d'),
+                    "type": "SELL",
+                    "price": price,
+                    "shares": 0,
+                    "profit": profit
+                })
+                
+            # track metrics
+            equity = cash + (holdings * price)
+            equity_curve.append({"time": date.strftime('%Y-%m-%d'), "value": equity})
+            
+            # drawdown calc
+            if equity > peak_equity:
+                peak_equity = equity
+            drawdown = (peak_equity - equity) / peak_equity * 100
+            if drawdown > max_drawdown:
+                max_drawdown = drawdown
+
+        # final metrics
+        final_equity = equity_curve[-1]['value']
+        total_return = ((final_equity - req.initial_capital) / req.initial_capital) * 100
+        winning_trades = len([t for t in trades if t.get('profit', 0) > 0])
+        total_sell_trades = len([t for t in trades if t['type'] == 'SELL'])
+        win_rate = (winning_trades / total_sell_trades * 100) if total_sell_trades > 0 else 0
+        
+        return {
+            "final_balance": final_equity,
+            "total_return": total_return,
+            "trade_count": len(trades),
+            "win_rate": win_rate,
+            "max_drawdown": max_drawdown, # new metric
+            "trades": trades,
+            "equity_curve": equity_curve 
+        }
+
+    except Exception as e:
+        print(f"Backtest error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/global-markets")
+def get_global_markets():
+    """
+    Fetches key global indicators: Indices, Commodities, Forex, Crypto.
+    Returns current price + 7-day history for sparklines.
+    """
+    tickers = {
+        # indices
+        "^AXJO": "ASX 200",
+        "^GSPC": "S&P 500",
+        "^IXIC": "Nasdaq",
+        "^N225": "Nikkei 225",
+        "^FTSE": "FTSE 100",
+        
+        # commodities
+        "GC=F": "Gold",
+        "CL=F": "Crude Oil",
+        "HG=F": "Copper",
+        "SI=F": "Silver",
+        
+        # forex
+        "AUDUSD=X": "AUD/USD",
+        "AUDJPY=X": "AUD/JPY",
+        
+        # crypto
+        "BTC-USD": "Bitcoin",
+        "ETH-USD": "Ethereum"
+    }
+    
+    try:
+        # bulk fetch data
+        symbols = list(tickers.keys())
+        # period="5d" gives us enough for a sparkline
+        data = yf.download(symbols, period="5d", interval="1h", progress=False)
+        
+        results = []
+        
+        for symbol, name in tickers.items():
+            try:
+                # 
+                try:
+                    series = data['Close'][symbol]
+                except KeyError:
+                    continue
+                    
+                # get latest values
+                clean_series = series.dropna()
+                if clean_series.empty:
+                    continue
+                    
+                current_price = clean_series.iloc[-1]
+                prev_close = clean_series.iloc[-2] if len(clean_series) > 1 else current_price
+                change = current_price - prev_close
+                change_percent = (change / prev_close) * 100
+                
+                # format history for sparkline (last 20 points to keep payload small)
+                history = clean_series.tail(24).tolist()
+                
+                # categorise
+                category = "Indices"
+                if "=F" in symbol: category = "Commodities"
+                elif "=X" in symbol: category = "Forex"
+                elif "-USD" in symbol: category = "Crypto"
+                
+                results.append({
+                    "symbol": symbol,
+                    "name": name,
+                    "price": current_price,
+                    "change": change,
+                    "change_percent": change_percent,
+                    "history": history,
+                    "category": category
+                })
+            except Exception as e:
+                print(f"Skipping {symbol}: {e}")
+                continue
+                
+        return results
+        
+    except Exception as e:
+        print(f"Global markets error: {e}")
+        return []

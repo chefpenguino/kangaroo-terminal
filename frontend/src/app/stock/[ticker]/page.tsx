@@ -1,9 +1,12 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Loader2, ArrowDownRight, X, ExternalLink, BrainCircuit, Calculator, Star, ChevronDown, Layers } from "lucide-react";
+import { ArrowLeft, Loader2, ArrowDownRight, X, ExternalLink, BrainCircuit, Calculator, Star, ChevronDown, Layers, Plus, Search } from "lucide-react";
 import Link from "next/link";
 import { createChart, ColorType, CandlestickSeries, HistogramSeries, LineSeries } from 'lightweight-charts';
+import { Treemap, ResponsiveContainer, Tooltip as ReTooltip, PieChart, Pie, Cell, AreaChart, Area, XAxis, YAxis } from "recharts";
+import { toast } from "sonner";
+import { notFound } from "next/navigation";
 
 // format relative time (eg 2h ago)
 function timeAgo(dateString: string) {
@@ -80,7 +83,7 @@ function processFinancials(data: any) {
   return { years, rows };
 }
 
-// --- ORDER TICKET COMPONENT ---
+// order ticket component
 const OrderTicket = ({ ticker, currentPrice, onTrade }: any) => {
     const [type, setType] = useState("BUY"); // BUY | SELL
     const [shares, setShares] = useState(1);
@@ -97,14 +100,21 @@ const OrderTicket = ({ ticker, currentPrice, onTrade }: any) => {
                 body: JSON.stringify({ ticker, shares, price: currentPrice, type })
             });
             if (res.ok) {
-                onTrade(); // Refresh parent data
-                alert(`${type} Order Filled!`);
+                onTrade(); 
+                toast.success(`Order Filled: ${type} ${shares} ${ticker}`, {
+                    description: `@ $${currentPrice.toFixed(2)}`,
+                    duration: 4000,
+                });
+                setShares(1); 
             } else {
                 const err = await res.json();
-                alert(`Error: ${err.detail}`);
+                toast.error("Order Failed", {
+                    description: err.detail
+                });
             }
         } catch(e) {
             console.error(e);
+            toast.error("Network Error");
         } finally {
             setLoading(false);
         }
@@ -127,13 +137,13 @@ const OrderTicket = ({ ticker, currentPrice, onTrade }: any) => {
                 </button>
             </div>
 
-            {/* Price Display */}
+            {/* price display */}
             <div className="flex justify-between items-center mb-6">
                 <span className="text-gray-400 text-sm">Market Price</span>
                 <span className="text-2xl font-bold text-white font-mono">${currentPrice.toFixed(2)}</span>
             </div>
 
-            {/* Inputs */}
+            {/* inputs */}
             <div className="space-y-4 mb-8">
                 <div>
                     <label className="block text-[10px] uppercase font-bold text-gray-500 mb-1">Shares</label>
@@ -155,7 +165,7 @@ const OrderTicket = ({ ticker, currentPrice, onTrade }: any) => {
                 </div>
             </div>
 
-            {/* Action Button */}
+            {/* action button */}
             <button 
                 onClick={executeOrder}
                 className={`w-full py-4 rounded-xl font-bold text-lg tracking-wide shadow-lg transition-all hover:scale-[1.02] active:scale-[0.98] ${
@@ -187,14 +197,15 @@ export default function StockDetail() {
   const [reading, setReading] = useState(false); 
   const [aiReport, setAiReport] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [is404, setIs404] = useState(false);
   const [valuation, setValuation] = useState<any>(null);  
   const [growthRate, setGrowthRate] = useState(5); // 5% growth
   const [discountRate, setDiscountRate] = useState(10); // 10% discount
   const [terminalMultiple, setTerminalMultiple] = useState(10); // 10x exit multiple
   const [isWatched, setIsWatched] = useState(false);
-  const [rightPanel, setRightPanel] = useState("info"); // Changed from "trade"
+  const [rightPanel, setRightPanel] = useState("info"); 
   
-  // Indicator State
+  // indicator state
   const [indicators, setIndicators] = useState({
     sma50: false,
     sma200: false,
@@ -202,12 +213,12 @@ export default function StockDetail() {
     bollinger: false
   });
   
-  // Toggle Helper
+  // helper
   const toggleIndicator = (key: string) => {
     setIndicators(prev => ({ ...prev, [key]: !prev[key as keyof typeof prev] }));
   };
   
-  // UI State for the dropdown menu
+  // ui state for dropdown
   const [showIndicatorMenu, setShowIndicatorMenu] = useState(false);
   
   const timeframes = [
@@ -221,11 +232,100 @@ export default function StockDetail() {
   ]
   const [activeTf, setActiveTf] = useState(timeframes[5]);
 
+  // comparison state
+  const [compareTicker, setCompareTicker] = useState("");
+  const [searchResults, setSearchResults] = useState<any[]>([]); 
+  const [isSearching, setIsSearching] = useState(false);
+  const [comparisonData, setComparisonData] = useState<any[]>([]);
+  const [showComparisonInput, setShowComparisonInput] = useState(false);
+  const [comparisonSymbol, setComparisonSymbol] = useState<string | null>(null);
+
+  // backtest state
+  const [backtestResult, setBacktestResult] = useState<any>(null);
+  const [runningSim, setRunningSim] = useState(false);
+  const [strategy, setStrategy] = useState("SMA_CROSS");
+
+  // fetch search
+  useEffect(() => {
+    const delayDebounceFn = setTimeout(async () => {
+      if (compareTicker.length > 1) {
+        setIsSearching(true);
+        try {
+          const res = await fetch(`http://localhost:8000/search?q=${compareTicker}`);
+          const data = await res.json();
+          setSearchResults(data);
+        } catch (error) {
+          console.error(error);
+        } finally {
+          setIsSearching(false);
+        }
+      } else {
+        setSearchResults([]);
+      }
+    }, 300); // 300ms delay
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [compareTicker]);
+
+  const handleAddComparison = async (targetTicker: string = compareTicker) => {
+    if (!targetTicker) return;
+    setLoading(true);
+    try {
+        const res = await fetch(`http://localhost:8000/stock/${targetTicker}/history?period=${activeTf.period}&interval=${activeTf.interval}`);
+        if (res.ok) {
+            const json = await res.json();
+            setComparisonData(json);
+            setComparisonSymbol(targetTicker.toUpperCase());
+            
+            setShowComparisonInput(false);
+            setCompareTicker("");
+            setSearchResults([]);
+        } else {
+            toast.error("Ticker not found");
+        }
+    } catch (e) {
+        console.error(e);
+    } finally {
+        setLoading(false);
+    }
+  };
+
+  const runBacktest = async () => {
+    setRunningSim(true);
+    try {
+        const res = await fetch("http://localhost:8000/backtest/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ 
+                ticker, 
+                strategy, 
+                initial_capital: 10000,
+                // default for now, could add sliders later ig?
+                param1: strategy === "SMA_CROSS" ? 50 : 30, 
+                param2: strategy === "SMA_CROSS" ? 200 : 70
+            })
+        });
+        const json = await res.json();
+        setBacktestResult(json);
+    } catch(e) {
+        console.error(e);
+        toast.error("Simulation Failed");
+    } finally {
+        setRunningSim(false);
+    }
+  };
+
   // fetch history 
   useEffect(() => {
     const fetchHistory = async () => {
       try {
         const res = await fetch(`http://localhost:8000/stock/${ticker}/history?period=${activeTf.period}&interval=${activeTf.interval}`);
+        
+        if (res.status === 404) {
+            setIs404(true);
+            return;
+        }
+        
         const json = await res.json();
         setData(json);
         
@@ -253,7 +353,7 @@ export default function StockDetail() {
         const stockDbRes = await fetch(`http://localhost:8000/stock/${ticker}`);
         const stockDbJson = await stockDbRes.json();
         setIsWatched(stockDbJson.is_watched);
-      } catch (e) {
+      } catch (e: any) {
         console.error(e);
       } finally {
         setLoading(false);
@@ -266,7 +366,10 @@ export default function StockDetail() {
   useEffect(() => {
     if (!data.length || !chartContainerRef.current) return;
 
-    // 1. Create Chart
+    // determine mode (price/percentage)
+    const isComparing = comparisonData.length > 0;
+
+    // create chart
     const chart = createChart(chartContainerRef.current, {
       layout: {
         background: { type: ColorType.Solid, color: '#0F0B08' },
@@ -279,6 +382,7 @@ export default function StockDetail() {
       width: chartContainerRef.current.clientWidth,
       height: 400,
       rightPriceScale: {
+        mode: isComparing ? 2 : 0, // 2 = Percentage, 0 = Normal
         scaleMargins: {
           top: 0.1,
           bottom: 0.2,
@@ -290,17 +394,33 @@ export default function StockDetail() {
       },
     });
 
-    // 2. Candlesticks
-    const candlestickSeries = chart.addSeries(CandlestickSeries, {
+    // main series
+    const mainSeries = chart.addSeries(CandlestickSeries, {
       upColor: '#4E9F76', 
       downColor: '#D65A5A', 
       borderVisible: false,
       wickUpColor: '#4E9F76',
       wickDownColor: '#D65A5A',
+      title: ticker.toUpperCase(),
     });
-    candlestickSeries.setData(data);
+    mainSeries.setData(data);
 
-    // 3. Volume
+    // comparison series
+    if (isComparing) {
+        const compSeries = chart.addSeries(LineSeries, {
+            color: '#3B82F6', 
+            lineWidth: 2,
+            title: comparisonSymbol || "Compare",
+            crosshairMarkerVisible: true,
+        });
+        const lineData = comparisonData.map((d: any) => ({
+            time: d.time,
+            value: d.close
+        }));
+        compSeries.setData(lineData);
+    }
+
+    // volume
     const volumeSeries = chart.addSeries(HistogramSeries, {
       priceFormat: { type: 'volume' },
       priceScaleId: '', 
@@ -317,36 +437,28 @@ export default function StockDetail() {
     }));
     volumeSeries.setData(volumeData);
 
-    // indicators
-
-    // SMA 50 (Blue)
-    if (indicators.sma50) {
-        const lineSeries = chart.addSeries(LineSeries, { color: '#2962FF', lineWidth: 2, title: 'SMA 50' });
-        lineSeries.setData(data.filter((d: any) => d.sma50).map((d: any) => ({ time: d.time, value: d.sma50 })));
+    // indicators (Only render if not comparing, to keep chart clean in % mode)
+    if (!isComparing) {
+        if (indicators.sma50) {
+            const lineSeries = chart.addSeries(LineSeries, { color: '#2962FF', lineWidth: 2, title: 'SMA 50' });
+            lineSeries.setData(data.filter((d: any) => d.sma50).map((d: any) => ({ time: d.time, value: d.sma50 })));
+        }
+        if (indicators.sma200) {
+            const lineSeries = chart.addSeries(LineSeries, { color: '#FF6D00', lineWidth: 2, title: 'SMA 200' });
+            lineSeries.setData(data.filter((d: any) => d.sma200).map((d: any) => ({ time: d.time, value: d.sma200 })));
+        }
+        if (indicators.ema20) {
+            const lineSeries = chart.addSeries(LineSeries, { color: '#00E5FF', lineWidth: 1, title: 'EMA 20' });
+            lineSeries.setData(data.filter((d: any) => d.ema20).map((d: any) => ({ time: d.time, value: d.ema20 })));
+        }
+        if (indicators.bollinger) {
+            const upper = chart.addSeries(LineSeries, { color: 'rgba(157, 78, 221, 0.5)', lineWidth: 1 });
+            const lower = chart.addSeries(LineSeries, { color: 'rgba(157, 78, 221, 0.5)', lineWidth: 1 });
+            upper.setData(data.filter((d: any) => d.bb_upper).map((d: any) => ({ time: d.time, value: d.bb_upper })));
+            lower.setData(data.filter((d: any) => d.bb_lower).map((d: any) => ({ time: d.time, value: d.bb_lower })));
+        }
     }
 
-    // SMA 200 (Orange)
-    if (indicators.sma200) {
-        const lineSeries = chart.addSeries(LineSeries, { color: '#FF6D00', lineWidth: 2, title: 'SMA 200' });
-        lineSeries.setData(data.filter((d: any) => d.sma200).map((d: any) => ({ time: d.time, value: d.sma200 })));
-    }
-
-    // EMA 20 (Cyan)
-    if (indicators.ema20) {
-        const lineSeries = chart.addSeries(LineSeries, { color: '#00E5FF', lineWidth: 1, title: 'EMA 20' });
-        lineSeries.setData(data.filter((d: any) => d.ema20).map((d: any) => ({ time: d.time, value: d.ema20 })));
-    }
-
-    // Bollinger Bands (Purple Area)
-    if (indicators.bollinger) {
-        const upper = chart.addSeries(LineSeries, { color: 'rgba(157, 78, 221, 0.5)', lineWidth: 1 });
-        const lower = chart.addSeries(LineSeries, { color: 'rgba(157, 78, 221, 0.5)', lineWidth: 1 });
-        
-        upper.setData(data.filter((d: any) => d.bb_upper).map((d: any) => ({ time: d.time, value: d.bb_upper })));
-        lower.setData(data.filter((d: any) => d.bb_lower).map((d: any) => ({ time: d.time, value: d.bb_lower })));
-    }
-
-    // resize logic
     const handleResize = () => {
         if(chartContainerRef.current) {
             chart.applyOptions({ width: chartContainerRef.current.clientWidth });
@@ -358,7 +470,7 @@ export default function StockDetail() {
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };
-  }, [data, indicators]); // re-render upon indicator change
+  }, [data, comparisonData, indicators]);
 
   const openArticle = async (url: string) => {
     if (!url) return;
@@ -441,6 +553,10 @@ export default function StockDetail() {
 
   const fairValue = calculateFairValue();
   const upside = valuation?.current_price ? ((fairValue - valuation.current_price) / valuation.current_price) * 100 : 0;
+
+  if (is404) {
+    notFound();
+  }
 
   return (
     <div className="animate-in fade-in duration-500">
@@ -546,6 +662,79 @@ export default function StockDetail() {
                                     {indicators.bollinger && <span className="text-primary">✓</span>}
                                 </button>
                             </div>
+                        )}
+                    </div>
+
+                    {/* compare input */}
+                    <div className="relative flex items-center">
+                        {comparisonSymbol ? (
+                            <div className="flex items-center gap-2 bg-blue-500/10 border border-blue-500/30 px-2 py-1.5 rounded-lg">
+                                <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                                <span className="text-[10px] font-bold text-blue-400">{comparisonSymbol}</span>
+                                <button 
+                                    onClick={() => { setComparisonData([]); setComparisonSymbol(null); }}
+                                    className="hover:text-white text-blue-400"
+                                >
+                                    <X size={12} />
+                                </button>
+                            </div>
+                        ) : (
+                        <div className="flex items-center gap-2 relative">
+                            {showComparisonInput ? (
+                                <div className="relative">
+                                    {/* input field */}
+                                    <div className="flex items-center bg-background border border-white/20 rounded-lg overflow-hidden h-7 animate-in fade-in slide-in-from-left-2 w-48">
+                                        <input 
+                                            autoFocus
+                                            className="bg-transparent text-xs text-white px-2 w-full outline-none placeholder-gray-600"
+                                            placeholder="Search Ticker..."
+                                            value={compareTicker}
+                                            onChange={(e) => setCompareTicker(e.target.value.toUpperCase())}
+                                            onKeyDown={(e) => e.key === 'Enter' && handleAddComparison(compareTicker)}
+                                            onBlur={() => setTimeout(() => setShowComparisonInput(false), 200)} 
+                                        />
+                                        <div className="px-2">
+                                            {isSearching ? <Loader2 size={10} className="animate-spin text-gray-500" /> : <Search size={10} className="text-gray-500" />}
+                                        </div>
+                                    </div>
+
+                                    {/* dropdown results */}
+                                    {searchResults.length > 0 && (
+                                        <div className="absolute top-full left-0 mt-2 w-64 bg-background border border-white/10 rounded-xl shadow-2xl overflow-hidden z-50 flex flex-col gap-0.5 p-1 animate-in fade-in zoom-in-95">
+                                            {searchResults.map((result) => (
+                                                <button
+                                                    key={result.ticker}
+                                                    onClick={() => handleAddComparison(result.ticker)} // pass ticker directly
+                                                    className="flex items-center gap-3 w-full px-3 py-2 hover:bg-white/10 rounded-lg transition-colors text-left group"
+                                                >
+                                                    {/* logo */}
+                                                    <img 
+                                                        src={`https://files.marketindex.com.au/xasx/96x96-png/${result.ticker.toLowerCase()}.png`}
+                                                        className="w-6 h-6 rounded-full bg-white object-cover border border-white/10"
+                                                        onError={(e) => (e.currentTarget.style.display = 'none')}
+                                                    />
+                                                    <div>
+                                                        <span className="block text-xs font-bold text-white group-hover:text-primary">
+                                                            {result.ticker}
+                                                        </span>
+                                                        <span className="block text-[10px] text-gray-500 truncate max-w-35">
+                                                            {result.name}
+                                                        </span>
+                                                    </div>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            ) : (
+                                <button 
+                                    onClick={() => setShowComparisonInput(true)}
+                                    className="text-[10px] font-bold px-2 py-1.5 rounded-lg border border-white/10 hover:border-primary/50 text-gray-400 hover:text-white transition-all flex items-center gap-1"
+                                >
+                                    <Plus size={10} /> Compare
+                                </button>
+                            )}
+                        </div>
                         )}
                     </div>
                 </div>
@@ -681,6 +870,12 @@ export default function StockDetail() {
           >
             VALUATION
           </button>
+          <button 
+            onClick={() => setActiveTab("simulation")}
+            className={`pb-3 text-sm font-bold tracking-wide transition-colors border-b-2 ${activeTab === "simulation" ? "text-primary border-primary" : "text-gray-500 border-transparent hover:text-white"}`}
+          >
+            SIMULATION
+          </button>
         </div>
 
         {/* tab: news */}
@@ -700,7 +895,7 @@ export default function StockDetail() {
                 >
                   <div>
                     <div className="flex justify-between items-center mb-4">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2.5">
                         {/* favicon Image */}
                         {article.provider?.url && (
                           <img 
@@ -806,10 +1001,6 @@ export default function StockDetail() {
             {/* initial state */}
             {!aiReport && !analyzing && (
               <div className="flex flex-col items-center justify-center h-full py-12 text-center">
-                <div className="p-4 rounded-full bg-surface border border-white/5 mb-6 shadow-lg">
-                  <BrainCircuit size={48} className="text-gray-500" />
-                </div>
-                <h3 className="text-xl font-bold text-white mb-2 font-instrument">Generate Investment Thesis</h3>
                 <p className="text-gray-500 max-w-md mb-8 leading-relaxed">
                   Engage the Kangaroo Neural Engine to analyse recent news sentiment and financial ratios for ${ticker}.
                 </p>
@@ -930,6 +1121,149 @@ export default function StockDetail() {
                  <Calculator size={48} />
                  <p>Insufficient financial data to build a model.</p>
                </div>
+             )}
+          </div>
+        )}
+
+        {/* tab: simulation */}
+        {activeTab === "simulation" && (
+          <div className="luxury-card p-8 rounded-xl min-h-100">
+             
+             {/* configuration header */}
+             <div className="flex flex-col md:flex-row justify-between items-center gap-6 mb-8 border-b border-white/5 pb-8">
+                 <div>
+                     <h3 className="text-xl font-bold text-white font-instrument mb-1">Algorithmic Backtester</h3>
+                     <p className="text-sm text-gray-500">Simulate institutional strategies on 2 years of data with a simulated balance of <b>$10,000</b>.</p>
+                 </div>
+                 
+                 <div className="flex items-center gap-3">
+                     <select 
+                        value={strategy}
+                        onChange={(e) => setStrategy(e.target.value)}
+                        className="bg-background border border-white/10 rounded-lg px-4 py-2 text-sm text-white focus:border-primary outline-none"
+                     >
+                         <option value="SMA_CROSS">Golden Cross (Trend)</option>
+                         <option value="RSI_REVERSAL">RSI Reversal (Mean Rev)</option>
+                         <option value="MACD">MACD Crossover (Momentum)</option>
+                         <option value="BB_BREAKOUT">Bollinger Breakout (Vol)</option>
+                         <option value="MOMENTUM">Rate of Change (Speed)</option>
+                     </select>
+                     
+                     <button 
+                      onClick={runBacktest}
+                      disabled={runningSim}
+                      className="luxury-button py-1 px-6"
+                     >
+                      {runningSim ? <Loader2 className="animate-spin" size={18} /> : "Run Sim"}
+                     </button>
+                   </div>
+                 </div>
+
+             {/* results display */}
+             {backtestResult && (
+                 <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
+                     
+                     {/* metrics grid */}
+                     <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
+                         <div className="p-4 bg-black/20 rounded-xl border border-white/5 text-center">
+                             <p className="text-[10px] text-gray-500 uppercase font-bold mb-1">Total Return</p>
+                             <p className={`text-xl font-mono font-bold ${backtestResult.total_return >= 0 ? "text-success" : "text-danger"}`}>
+                                 {backtestResult.total_return > 0 ? "+" : ""}{backtestResult.total_return.toFixed(2)}%
+                             </p>
+                         </div>
+                         <div className="p-4 bg-black/20 rounded-xl border border-white/5 text-center">
+                             <p className="text-[10px] text-gray-500 uppercase font-bold mb-1">Win Rate</p>
+                             <p className="text-xl font-mono font-bold text-white">
+                                 {backtestResult.win_rate.toFixed(1)}%
+                             </p>
+                         </div>
+                         <div className="p-4 bg-black/20 rounded-xl border border-white/5 text-center">
+                             <p className="text-[10px] text-gray-500 uppercase font-bold mb-1">Drawdown</p>
+                             <p className="text-xl font-mono font-bold text-danger">
+                                 -{backtestResult.max_drawdown.toFixed(2)}%
+                             </p>
+                         </div>
+                         <div className="p-4 bg-black/20 rounded-xl border border-white/5 text-center">
+                             <p className="text-[10px] text-gray-500 uppercase font-bold mb-1">Trades</p>
+                             <p className="text-xl font-mono font-bold text-white">
+                                 {backtestResult.trade_count}
+                             </p>
+                         </div>
+                         <div className="p-4 bg-black/20 rounded-xl border border-white/5 text-center">
+                             <p className="text-[10px] text-gray-500 uppercase font-bold mb-1">Final Balance</p>
+                             <p className="text-xl font-mono font-bold text-primary">
+                                 ${backtestResult.final_balance.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                             </p>
+                         </div>
+                     </div>
+
+                     {/* equity curve chart */}
+                     <div className="h-64 mb-8 w-full border border-white/5 rounded-xl bg-black/20 p-4">
+                        <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-4">Equity Curve</h4>
+                        <ResponsiveContainer width="100%" height="100%">
+                            <AreaChart data={backtestResult.equity_curve}>
+                                <defs>
+                                    <linearGradient id="colorEquity" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor="#C68E56" stopOpacity={0.3}/>
+                                        <stop offset="95%" stopColor="#C68E56" stopOpacity={0}/>
+                                    </linearGradient>
+                                </defs>
+                                <XAxis dataKey="time" hide />
+                                <YAxis domain={['auto', 'auto']} hide />
+                                <ReTooltip 
+                                    contentStyle={{ backgroundColor: '#1C140F', borderColor: 'rgba(255,255,255,0.1)', color: '#fff' }}
+                                    formatter={(value: any) => [`$${value.toLocaleString()}`, "Equity"]}
+                                    labelStyle={{ color: '#999' }}
+                                />
+                                <Area 
+                                    type="monotone" 
+                                    dataKey="value" 
+                                    stroke="#C68E56" 
+                                    fillOpacity={1} 
+                                    fill="url(#colorEquity)" 
+                                />
+                            </AreaChart>
+                        </ResponsiveContainer>
+                     </div>
+
+                     {/* trade log */}
+                     <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-4">Trade Log</h4>
+                     <div className="overflow-x-auto max-h-50 custom-scrollbar border border-white/5 rounded-xl">
+                         <table className="w-full text-left text-xs">
+                             <thead className="bg-white/5 sticky top-0 backdrop-blur-md">
+                                 <tr>
+                                     <th className="p-3 text-gray-500 font-medium">Date</th>
+                                     <th className="p-3 text-gray-500 font-medium">Action</th>
+                                     <th className="p-3 text-gray-500 font-medium text-right">Price</th>
+                                     <th className="p-3 text-gray-500 font-medium text-right">Profit</th>
+                                 </tr>
+                             </thead>
+                             <tbody className="divide-y divide-white/5">
+                                 {backtestResult.trades.map((t: any, i: number) => (
+                                     <tr key={i} className="hover:bg-white/5">
+                                         <td className="p-3 font-mono text-gray-400">{t.date}</td>
+                                         <td className="p-3">
+                                             <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${t.type === "BUY" ? "bg-green-500/10 text-green-400" : "bg-red-500/10 text-red-400"}`}>
+                                                 {t.type}
+                                             </span>
+                                         </td>
+                                         <td className="p-3 text-right font-mono text-white">${t.price.toFixed(2)}</td>
+                                         <td className={`p-3 text-right font-mono font-bold ${t.profit > 0 ? "text-success" : t.profit < 0 ? "text-danger" : "text-gray-600"}`}>
+                                             {t.profit ? `${t.profit > 0 ? "+" : ""}$${t.profit.toFixed(2)}` : "-"}
+                                         </td>
+                                     </tr>
+                                 ))}
+                             </tbody>
+                         </table>
+                     </div>
+
+                 </div>
+             )}
+             
+             {!backtestResult && !runningSim && (
+                 <div className="flex items-center justify-center h-48 text-gray-600 italic">
+                     Select a strategy and click Run to begin simulation.
+                 </div>
              )}
           </div>
         )}

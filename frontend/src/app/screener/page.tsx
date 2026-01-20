@@ -79,7 +79,7 @@ const StockContent = (props: any) => {
   }
 
   return (
-    <g>// --- STOCK BLOCK ---
+    <g>
 
       <foreignObject x={x} y={y} width={width} height={height}>
         <Link href={`/stock/${name}`} className="block w-full h-full">
@@ -206,7 +206,7 @@ export default function ScreenerPage() {
     return (
       <div className="flex flex-col items-center justify-center h-[80vh] text-stone-400 gap-4">
         <Loader2 className="animate-spin text-primary" size={48} />
-        <p className="text-l">Scanning Market Data...</p>
+        <p className="text-l animate-pulse">Scanning Market Data...</p>
       </div>
     );
   }
