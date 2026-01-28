@@ -1,13 +1,15 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Loader2, ArrowDownRight, X, ExternalLink, BrainCircuit, Calculator, Star, ChevronDown, Layers, Plus, Search, Users, Briefcase, PieChart as PieIcon, Target, Info, Bell } from "lucide-react";
+import { ArrowLeft, Loader2, X, BrainCircuit, Calculator, Star, ChevronDown, Layers, Plus, Search, Users, Briefcase, PieChart as PieIcon, Target, Info, Bell, FileText, Download, Eye, Calendar } from "lucide-react";
 import Link from "next/link";
 import AlertModal from "../../components/AlertModal";
 import { createChart, ColorType, CandlestickSeries, HistogramSeries, LineSeries } from 'lightweight-charts';
 import { Treemap, ResponsiveContainer, Tooltip as ReTooltip, PieChart, Pie, Cell, AreaChart, Area, XAxis, YAxis, BarChart, Bar, CartesianGrid } from "recharts";
 import { toast } from "sonner";
 import { notFound } from "next/navigation";
+import DocumentViewer from "./DocumentViewer";
+import KangarooReader from "./KangarooReader";
 
 // format relative time (eg 2h ago)
 function timeAgo(dateString: string) {
@@ -216,7 +218,10 @@ export default function StockDetailClient({
   const [articleContent, setArticleContent] = useState<any>(null);
   const [reading, setReading] = useState(false);
   const [aiReport, setAiReport] = useState<string | null>(null);
-  const [analysing, setanalysing] = useState(false);
+  const [analysing, setAnalysing] = useState(false);
+  const [filings, setFilings] = useState<any[]>([]);
+  const [filingsMetadata, setFilingsMetadata] = useState<any>(null);
+  const [filingsLoading, setFilingsLoading] = useState(false);
   const [is404, setIs404] = useState(false);
   const [valuation, setValuation] = useState<any>(initialValuation);
   const [corporate, setCorporate] = useState<any>(initialCorporate);
@@ -226,7 +231,52 @@ export default function StockDetailClient({
   const [isWatched, setIsWatched] = useState(initialIsWatched);
   const [rightPanel, setRightPanel] = useState("info");
   const [institutional, setInstitutional] = useState<any>(initialInstitutional);
+
+  // cache constants
+  const CACHE_DURATION = 30 * 60 * 1000;
+  const getCacheKey = (type: string, t: string) => `k-terminal-${type}-${t.toUpperCase()}`;
+
+  // cache helpers
+  const getCachedData = (type: string, t: string) => {
+    try {
+      const cached = localStorage.getItem(getCacheKey(type, t));
+      if (!cached) return null;
+      const { data, timestamp } = JSON.parse(cached);
+      if (Date.now() - timestamp > CACHE_DURATION) {
+        localStorage.removeItem(getCacheKey(type, t));
+        return null;
+      }
+      return data;
+    } catch (e) {
+      return null;
+    }
+  };
+
+  const setCachedData = (type: string, t: string, data: any) => {
+    try {
+      localStorage.setItem(getCacheKey(type, t), JSON.stringify({
+        data,
+        timestamp: Date.now()
+      }));
+    } catch (e) {
+      console.error("Cache write failed", e);
+    }
+  };
   const [isAlertModalOpen, setIsAlertModalOpen] = useState(false);
+  const [selectedFiling, setSelectedFiling] = useState<any>(null);
+
+  // filings helpers
+  const getScoreColor = (score: number) => {
+    if (score >= 15) return "text-green-400 bg-green-500/20 border-green-500/50";
+    if (score >= 5) return "text-yellow-400 bg-yellow-500/20 border-yellow-500/50";
+    return "text-gray-400 bg-gray-500/20 border-gray-500/50";
+  };
+
+  const getScoreEmoji = (score: number) => {
+    if (score >= 15) return "🟢";
+    if (score >= 5) return "🟡";
+    return "⚪";
+  };
 
   // indicator state
   const [indicators, setIndicators] = useState({
@@ -250,9 +300,38 @@ export default function StockDetailClient({
     { label: '1M', period: '1mo', interval: '1d' },
     { label: '3M', period: '3mo', interval: '1d' },
     { label: '6M', period: '6mo', interval: '1d' },
-    { label: '1Y', period: '1y', interval: '1d' },
-    { label: 'Max', period: 'max', interval: '1mo' },
-  ]
+    { label: '1Y', period: '1y', interval: '1wk' },
+    { label: '5Y', period: '5y', interval: '1wk' },
+    { label: 'MAX', period: 'max', interval: '1mo' },
+  ];
+
+  // sync activeTab with URL hash
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash.replace('#', '');
+      const validTabs = ["news", "financials", "ai", "valuation", "corporate", "filings"];
+      if (validTabs.includes(hash)) {
+        setActiveTab(hash);
+      }
+    };
+
+    // run once on mount
+    handleHashChange();
+
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  // update hash when tab changes
+  useEffect(() => {
+    if (activeTab) {
+      const currentHash = window.location.hash.replace('#', '');
+      if (currentHash !== activeTab) {
+        // use pushState to support back button
+        window.history.pushState(null, '', `#${activeTab}`);
+      }
+    }
+  }, [activeTab]);
   const [activeTf, setActiveTf] = useState(timeframes[5]);
 
   // comparison state
@@ -467,23 +546,66 @@ export default function StockDetailClient({
   };
 
   const generateAnalysis = async () => {
-    setanalysing(true);
+    if (aiReport) return;
+
+    // check cache
+    const cached = getCachedData('analysis', ticker);
+    if (cached) {
+      setAiReport(cached);
+      return;
+    }
+
+    setAnalysing(true);
     try {
       const res = await fetch(`http://localhost:8000/stock/${ticker}/analyse`);
       const json = await res.json();
       setAiReport(json.report);
+      setCachedData('analysis', ticker, json.report);
     } catch (e) {
       console.error(e);
     } finally {
-      setanalysing(false);
+      setAnalysing(false);
+    }
+  };
+
+  const fetchFilings = async () => {
+    if (filings.length > 0) return;
+
+    // check cache
+    const cached = getCachedData('filings', ticker);
+    if (cached) {
+      setFilings(cached.filings);
+      setFilingsMetadata(cached.metadata);
+      return;
+    }
+
+    setFilingsLoading(true);
+    try {
+      const res = await fetch(`http://localhost:8000/stock/${ticker}/filings`);
+      const data = await res.json();
+
+      if (data.filings && Array.isArray(data.filings)) {
+        setFilings(data.filings);
+        setFilingsMetadata(data.metadata);
+        setCachedData('filings', ticker, { filings: data.filings, metadata: data.metadata });
+      } else if (Array.isArray(data)) {
+        setFilings(data);
+        setCachedData('filings', ticker, { filings: data, metadata: null });
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setFilingsLoading(false);
     }
   };
 
   useEffect(() => {
-    if (activeTab === "ai" && !aiReport && !analysing) {
+    if (activeTab === "ai") {
       generateAnalysis();
+    } else if (activeTab === "filings") {
+      fetchFilings();
     }
-  }, [activeTab]);
+  }, [activeTab, ticker]);
 
   const toggleWatchlist = async () => {
     const newState = !isWatched;
@@ -591,11 +713,11 @@ export default function StockDetailClient({
           <button
             onClick={toggleWatchlist}
             className={`group flex items-center gap-2 px-4 py-2 rounded-xl border transition-all duration-300 ${isWatched
-              ? "bg-yellow-500/10 border-yellow-500/50 text-yellow-500"
+              ? "bg-primary/10 border-primary/50 text-primary"
               : "bg-surface border-white/10 text-gray-500 hover:border-white/30 hover:text-white"
               }`}
           >
-            <Star size={18} className={isWatched ? "fill-yellow-500" : "fill-transparent group-hover:scale-110 transition-transform"} />
+            <Star size={18} className={isWatched ? "fill-primary" : "fill-transparent group-hover:scale-110 transition-transform"} />
             <span className="text-sm font-bold tracking-wide">
               {isWatched ? "WATCHING" : "WATCH"}
             </span>
@@ -870,6 +992,12 @@ export default function StockDetailClient({
             className={`pb-3 text-sm font-bold tracking-wide transition-colors border-b-2 ${activeTab === "corporate" ? "text-primary border-primary" : "text-gray-500 border-transparent hover:text-white"}`}
           >
             CORPORATE
+          </button>
+          <button
+            onClick={() => setActiveTab("filings")}
+            className={`pb-3 text-sm font-bold tracking-wide transition-colors border-b-2 ${activeTab === "filings" ? "text-primary border-primary" : "text-gray-500 border-transparent hover:text-white"}`}
+          >
+            FILINGS
           </button>
         </div>
 
@@ -1554,123 +1682,154 @@ export default function StockDetailClient({
           </div>
         )}
 
+        {/* tab: filings */}
+        {activeTab === "filings" && (
+          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+            {/* modal */}
+            {selectedFiling && (
+              <DocumentViewer
+                isOpen={true}
+                onClose={() => setSelectedFiling(null)}
+                docUrl={selectedFiling.url}
+                docTitle={selectedFiling.title}
+                ticker={ticker}
+              />
+            )}
+
+            {/* loading state */}
+            {filingsLoading ? (
+              <div className="flex flex-col items-center justify-center py-20 text-gray-500">
+                <Loader2 className="animate-spin mb-3 text-primary" size={32} />
+                <p className="animate-pulse">Scanning ASX Announcements...</p>
+              </div>
+            ) : filings.length > 0 ? (
+              <>
+                <div className="grid gap-3">
+                  {filings.map((doc, i) => (
+                    <div key={i} className="luxury-card p-4 rounded-xl flex justify-between items-center group transition-all duration-300 hover:border-primary/30 relative hover:z-50">
+                      <div className="flex items-start gap-4 flex-1">
+                        <div className="bg-primary/10 p-3 rounded-lg text-primary group-hover:scale-110 transition-transform">
+                          <FileText size={24} />
+                        </div>
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <h4 className="text-white font-bold text-sm group-hover:text-primary transition-colors">{doc.title}</h4>
+
+                            {/* score badge */}
+                            {doc.score !== undefined && (
+                              <div className="relative flex items-center">
+                                <div className={`peer flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold border cursor-help transition-all hover:scale-105 ${getScoreColor(doc.score)}`}>
+                                  <span>{getScoreEmoji(doc.score)}</span>
+                                  <span>{doc.score}</span>
+                                </div>
+
+                                {/* tooltip */}
+                                {doc.score_reason && (
+                                  <div className="absolute top-full left-0 mt-3 w-80 bg-[#1A110D] border border-orange-500/30 p-4 rounded-xl shadow-2xl opacity-0 peer-hover:opacity-100 transition-all duration-300 z-50 pointer-events-none translate-y-2 peer-hover:translate-y-0 text-left">
+                                    <div className="flex items-center gap-2 mb-2 text-primary">
+                                      <Info size={14} />
+                                      <span className="font-bold text-[10px] uppercase tracking-wider">Score Breakdown</span>
+                                    </div>
+                                    <p className="text-[11px] text-gray-300 font-medium normal-case leading-relaxed">
+                                      {doc.score_reason}
+                                    </p>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <span className="text-xs text-gray-400 flex items-center gap-1">
+                              <Calendar size={12} /> {doc.date}
+                            </span>
+                            <span className="text-[10px] text-gray-600 border border-gray-700 px-1.5 rounded uppercase font-bold">PDF</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 opacity-60 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={() => setSelectedFiling(doc)}
+                          className="bg-primary hover:bg-primary/80 text-black text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-2 transition-all shadow-lg hover:shadow-primary/20"
+                        >
+                          <Eye size={14} /> ANALYSE
+                        </button>
+                        <a
+                          href={doc.url}
+                          target="_blank"
+                          className="bg-white/5 hover:bg-white/20 text-white p-2 rounded-lg transition-all border border-white/10"
+                          title="Download / Open Original"
+                        >
+                          <Download size={16} />
+                        </a>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* metadata footer */}
+                {filingsMetadata && (
+                  <div className="mt-4 p-3 bg-white/5 rounded-xl border border-white/10 flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs text-gray-400">
+                      <span>
+                        Showing <span className="text-white font-bold">{filingsMetadata.returned_count}</span> of{" "}
+                        <span className="text-white font-bold">{filingsMetadata.total_scanned}</span> filings scanned
+                        {filingsMetadata.filtered_count > 0 && (
+                          <> (<span className="text-gray-500">{filingsMetadata.filtered_count} filtered</span>)</>
+                        )}
+                      </span>
+                    </div>
+                    <div className="relative flex items-center">
+                      <button className="peer text-xs text-gray-500 hover:text-primary transition-all flex items-center gap-1 cursor-help">
+                        <Info size={12} />
+                        Scoring Info
+                      </button>
+
+                      {/* tooltip */}
+                      <div className="absolute bottom-full right-0 mb-3 w-100 bg-[#1A110D] border border-orange-500/30 p-4 rounded-xl shadow-2xl opacity-0 peer-hover:opacity-100 transition-all duration-300 z-50 pointer-events-none -translate-y-2 peer-hover:translate-y-0 text-left">
+                        <div className="flex items-center gap-2 mb-3 text-primary">
+                          <FileText size={14} />
+                          <span className="font-bold text-[10px] uppercase tracking-wider">Scoring System</span>
+                        </div>
+                        <div className="text-[11px] text-gray-300 space-y-2 font-medium leading-relaxed">
+                          <p className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-green-400"></span>
+                            <span className="text-white/60">High (15+):</span> Annual reports, earnings, financial reports
+                          </p>
+                          <p className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-yellow-400"></span>
+                            <span className="text-white/60">Medium (5-14):</span> Guidance, dividends, investor briefings
+                          </p>
+                          <p className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-gray-400"></span>
+                            <span className="text-white/60">Standard (0-4):</span> General announcements
+                          </p>
+                          <div className="mt-3 pt-3 border-t border-white/10 text-[10px] text-gray-500 italic">
+                            Noise (director transactions, cessations) is automatically filtered.
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="text-center py-20 text-gray-500 bg-white/5 rounded-xl border border-white/5 border-dashed">
+                <p>No recent filings found.</p>
+              </div>
+            )}
+          </div>
+        )}
+
       </div>
 
       {/* article reader (kangarooreader) */}
-      {selectedArticle && (
-        <div className="fixed inset-0 z-100 flex items-center justify-center p-4">
-          <div
-            className="absolute inset-0 bg-black/95 backdrop-blur-xl transition-opacity"
-            onClick={() => setSelectedArticle(null)}
-          />
-
-          {/* self-note: maybe change this later to make it more focused (wider) */}
-          <div className="luxury-card w-full max-w-5xl h-[90vh] relative z-10 rounded-2xl flex flex-col animate-in fade-in zoom-in-95 duration-300 shadow-2xl border border-white/10 overflow-hidden">
-
-            {/* header */}
-            <div className="flex justify-between items-center px-8 py-5 border-b border-white/5 bg-background/95 backdrop-blur">
-              <div className="flex items-center gap-2.5">
-                <h1
-                  className="text-[1.7rem] font-instrument tracking-tight bg-linear-to-br from-white via-stone-200 to-stone-400 bg-clip-text text-transparent drop-shadow-[0_1.5px_1.5px_rgba(0,0,0,0.5)] whitespace-nowrap overflow-hidden">
-                  KangarooTerminal
-                </h1>
-              </div>
-
-              {/* close */}
-              <button
-                onClick={() => setSelectedArticle(null)}
-                className="luxury-icon-button"
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            {/* content area */}
-            <div className="flex-1 overflow-y-auto custom-scrollbar bg-background">
-              {reading ? (
-                <div className="h-full flex flex-col items-center justify-center gap-6 text-primary">
-                  <div className="relative">
-                    <Loader2 className="animate-spin" size={64} />
-                    <div className="absolute inset-0 blur-xl bg-primary/20 rounded-full"></div>
-                  </div>
-                  <p className="text-sm text-stone-500">Accessing KangarooReader...</p>
-                </div>
-              ) : articleContent ? (
-                <div className="max-w-3xl mx-auto py-12 px-8">
-                  {/* hero image */}
-                  {articleContent.top_image && (
-                    <div className="relative mb-10 group">
-                      <img
-                        src={articleContent.top_image}
-                        className="w-full h-100 object-cover rounded-2xl border border-white/10 shadow-2xl"
-                        alt="Article Header"
-                      />
-                      <div className="absolute inset-0 rounded-2xl ring-1 ring-inset ring-white/10"></div>
-                    </div>
-                  )}
-
-                  {/* title */}
-                  <h1 className="text-4xl md:text-5xl font-bold text-white mb-6 leading-[1.15] font-instrument tracking-tight">
-                    {articleContent.title}
-                  </h1>
-
-                  {/* metadata bar (authors, date) */}
-                  <div className="flex items-center gap-4 mb-10 text-sm text-gray-400 border-l-2 border-primary/50 pl-4">
-                    {articleContent.authors && articleContent.authors.length > 0 && (
-                      <span className="font-medium text-gray-300">
-                        By <span className="text-primary">{articleContent.authors.join(", ")}</span>
-                      </span>
-                    )}
-                    {articleContent.publish_date && (
-                      <>
-                        <span>•</span>
-                        <span>
-                          {new Date(articleContent.publish_date).toLocaleDateString(undefined, { dateStyle: 'long' })}
-                        </span>
-                      </>
-                    )}
-                  </div>
-
-                  {/* content */}
-                  <div
-                    className="prose prose-invert prose-lg max-w-none 
-                      prose-headings:text-white prose-headings:font-bold prose-headings:font-instrument
-                      prose-p:text-gray-300 prose-p:leading-relaxed prose-p:text-[1.1rem]
-                      prose-a:text-primary prose-a:no-underline hover:prose-a:underline
-                      prose-strong:text-white prose-strong:font-bold
-                      prose-em:text-gray-300 prose-em:italic
-                      prose-blockquote:border-l-primary prose-blockquote:bg-white/5 prose-blockquote:py-2 prose-blockquote:px-6 prose-blockquote:rounded-r-lg
-                      prose-img:rounded-xl prose-img:border prose-img:border-white/10 prose-img:shadow-lg prose-img:my-8
-                      prose-table:w-full prose-table:border-collapse prose-table:my-8 prose-table:text-sm
-                      prose-th:text-primary prose-th:text-left prose-th:p-4 prose-th:border-b prose-th:border-white/10 prose-th:uppercase prose-th:tracking-wider
-                      prose-td:p-4 prose-td:border-b prose-td:border-white/5 prose-td:text-gray-400"
-                    dangerouslySetInnerHTML={{ __html: articleContent.html }}
-                  />
-                </div>
-              ) : (
-                // failed to load
-                <div className="h-full flex flex-col items-center justify-center text-center p-8">
-                  <div className="p-6 rounded-full bg-red-500/5 text-red-500 mb-6 border border-red-500/20 shadow-[0_0_30px_rgba(220,38,38,0.1)]">
-                    <ArrowDownRight size={64} />
-                  </div>
-                  <h3 className="text-3xl font-bold text-white mb-3 font-instrument">Failed to Load</h3>
-                  <p className="text-gray-500 max-w-md mb-10 text-lg">
-                    Apologies, we weren't able to decrypt this article directly. It is likely protected by a cloudflare turnstile or a strict paywall.
-                  </p>
-                  <a
-                    href={selectedArticle}
-                    target="_blank"
-                    className="luxury-button"
-                  >
-                    <span>Open in Browser</span>
-                    <ExternalLink size={18} />
-                  </a>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      <KangarooReader
+        selectedArticle={selectedArticle}
+        onClose={() => setSelectedArticle(null)}
+        reading={reading}
+        articleContent={articleContent}
+      />
     </div>
   );
 }

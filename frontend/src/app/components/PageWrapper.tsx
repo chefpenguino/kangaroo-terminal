@@ -25,8 +25,8 @@ export default function PageWrapper({ children }: { children: React.ReactNode })
       const playPromise = audioRef.current.play();
       if (playPromise !== undefined) {
         playPromise.catch(e => {
-          // ignore aborterror so next doesnt throw that stupid error on nav
-          if (e.name !== 'AbortError') {
+          // ignore common browser-blocked audio errors
+          if (e.name !== 'AbortError' && e.name !== 'NotAllowedError') {
             console.error("Audio play failed", e);
           }
         });
@@ -37,6 +37,8 @@ export default function PageWrapper({ children }: { children: React.ReactNode })
   };
 
   useEffect(() => {
+    let isFirstCheck = true;
+
     const checkAlerts = async () => {
       try {
         const res = await fetch("http://localhost:8000/alerts/triggered");
@@ -46,15 +48,18 @@ export default function PageWrapper({ children }: { children: React.ReactNode })
         let hasNew = false;
         alerts.forEach((alert: any) => {
           if (!notifiedIds.current.has(alert.id)) {
-            // new alert
-            hasNew = true;
+            // mark as notified immediately to avoid duplicates
             notifiedIds.current.add(alert.id);
 
+            // visual toast always shows for new/active alerts
             toast(`PRICE ALERT: ${alert.ticker}`, {
               description: `Price is ${alert.condition} $${alert.target_price.toFixed(2)}`,
               icon: <BellRing className="text-red-500" size={18} />,
-              duration: 10000, // stay longer
+              duration: 10000,
             });
+
+            // attempt audio alert - if browser blocks it, it will fail silently via catch block
+            hasNew = true;
           }
         });
 
@@ -62,10 +67,14 @@ export default function PageWrapper({ children }: { children: React.ReactNode })
           playAlertSound();
         }
 
+        isFirstCheck = false;
       } catch (e) {
         console.error("Alert poll failed", e);
       }
     };
+
+    // run immediately on mount
+    checkAlerts();
 
     const interval = setInterval(checkAlerts, 5000); // check every 5s
     return () => clearInterval(interval);

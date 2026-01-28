@@ -51,3 +51,17 @@ class Alert(Base):
     status = Column(String, default="ACTIVE")    # "ACTIVE", "TRIGGERED"
     note = Column(String, nullable=True)         # "Dividend on 2026-02-15"
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+class FilingAnalysis(Base):
+    __tablename__ = "filing_analysis"
+
+    pdf_url = Column(String, primary_key=True)
+    ticker = Column(String, index=True)
+    
+    guidance = Column(Text) 
+    risks_json = Column(Text)
+    sentiment_score = Column(Integer)
+    sentiment_reasoning = Column(Text)
+    summary_json = Column(Text)
+    
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))

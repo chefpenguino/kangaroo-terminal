@@ -118,6 +118,22 @@ export default function Sidebar() {
 
       {/* nav links */}
       <nav className="flex-1 mt-4">
+        <Link
+          href="/briefing"
+          className={`relative flex items-center ${isCollapsed ? "justify-center px-2" : "gap-3 px-4"} py-3 mx-2 mb-2 rounded-xl transition-all duration-300 group ${pathname === "/briefing"
+            ? "bg-linear-to-r from-primary/20 to-transparent text-primary border border-primary/30 shadow-[0_0_15px_rgba(198,142,86,0.1)]"
+            : "text-gray-400 hover:text-white hover:bg-white/5"
+            }`}
+        >
+          <Newspaper size={20} className={`relative z-10 ${pathname === "/briefing" ? "text-primary animate-pulse" : "text-gray-500 group-hover:text-white"}`} />
+          {!isCollapsed && (
+            <span className="relative z-10 font-instrument text-base tracking-wide whitespace-nowrap overflow-hidden">
+              Morning Note
+            </span>
+          )}
+        </Link>
+        <div className="h-4"></div>
+
         {!isCollapsed && <div className="px-6 mb-2 text-xs font-bold text-gray-700 uppercase tracking-wider animate-in fade-in">Monitor</div>}
 
         <NavItem href="/" label="Dashboard" icon={LayoutDashboard} active={pathname === "/"} layoutId="nav-highlight" collapsed={isCollapsed} />
@@ -150,6 +166,6 @@ export default function Sidebar() {
           )}
         </div>
       </div>
-    </motion.aside>
+    </motion.aside >
   );
 }

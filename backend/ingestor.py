@@ -93,8 +93,8 @@ async def update_database(data: list[dict]):
                 db.add(stock)
             else:
                 # UPDATE EXISTING
-                # self-healing: if sector is missing for some reason, fix it
-                if not stock.sector or stock.sector == "Unknown":
+                # self-healing: if sector is missing, fix it (but don't loop on 'Unknown' if we already tried)
+                if not stock.sector:
                      print(f"[+] fixing missing sector for {item['ticker']}...")
                      stock.sector = get_sector_info(item['ticker'])
 
@@ -149,7 +149,7 @@ async def run_market_engine():
                             # print a dot so yk it's alive
                             print(".", end="", flush=True)
 
-                    # 4. wait 1s
+                    # wait 1s
                     await asyncio.sleep(1)
                 
                 print("\n[🦘] the market just closed, stopping scraper..")

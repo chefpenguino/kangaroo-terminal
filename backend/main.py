@@ -22,11 +22,25 @@ from datetime import datetime
 from agent_tools import AVAILABLE_TOOLS, get_current_time
 from pydantic import BaseModel # Add this at top if missing
 from dotenv import load_dotenv
+import logging
+
+# suppress noise from polling endpoints
+class PollingFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        # noisy endpoints to suppress
+        noisy_endpoints = ["/account", "/watchlist", "/transactions", "/alerts/triggered", "/scraper-status", "/stocks", "/global-markets"]
+        return not any(endpoint in msg for endpoint in noisy_endpoints)
+
+logging.getLogger("uvicorn.access").addFilter(PollingFilter())
 from newspaper import Article, Config  # type: ignore
 from readability import Document # type: ignore
 from contextlib import asynccontextmanager
 from playwright.async_api import async_playwright
 from stream_utils import set_stream_queue 
+from stream_utils import set_stream_queue 
+import briefing 
+import filings 
 
 load_dotenv()
 HACKCLUB_API_KEY = os.getenv("HACKCLUB_API_KEY")
@@ -50,6 +64,15 @@ models.Base.metadata.create_all(bind=engine)
 # global scan cache
 SCAN_CACHE = []
 LAST_SCAN_TIME = None
+
+# briefing cache (1 hour expiry)
+BRIEFING_CACHE = {
+    "data": None,
+    "timestamp": 0
+}
+
+
+
 
 async def alert_monitor_task():
     """
@@ -189,12 +212,12 @@ async def get_scraper_status_endpoint():
     return get_engine_status()
 
 @app.get("/stocks")
-async def get_stocks(db: Session = Depends(get_db)):
+def get_stocks(db: Session = Depends(get_db)):
     # returns stocks sorted by market cap (biggest first)
     return db.query(models.Stock).order_by(models.Stock.market_cap.desc()).all()
 
 @app.get("/search")
-async def search_stocks(q: str, db: Session = Depends(get_db)):
+def search_stocks(q: str, db: Session = Depends(get_db)):
     """
     Search stocks by Ticker or Name.
     Case insensitive. Limits to 5 results for dropdown.
@@ -213,14 +236,14 @@ async def search_stocks(q: str, db: Session = Depends(get_db)):
     return results
 
 @app.get("/stock/{ticker}")
-async def get_stock(ticker: str, db: Session = Depends(get_db)):
+def get_stock(ticker: str, db: Session = Depends(get_db)):
     stock = db.query(models.Stock).filter(models.Stock.ticker == ticker.upper()).first()
     if not stock:
         raise HTTPException(status_code=404, detail="Stock not found")
     return stock
 
 @app.get("/stock/{ticker}/history") 
-async def get_stock_history(ticker: str, period: str = "1mo", interval: str = "1d"):
+def get_stock_history(ticker: str, period: str = "1mo", interval: str = "1d"):
     try:
         symbol = f"{ticker.upper()}.AX" if not ticker.endswith(".AX") else ticker.upper()
         
@@ -280,7 +303,7 @@ async def get_stock_history(ticker: str, period: str = "1mo", interval: str = "1
         raise HTTPException(status_code=500, detail="failed to fetch the history")
     
 @app.get("/stock/{ticker}/info")
-async def get_stock_info(ticker: str):
+def get_stock_info(ticker: str):
     """gets static company profile data (description, sector, industry, website)"""
     try:
         # .AX for aussie stocks once again
@@ -303,7 +326,7 @@ async def get_stock_info(ticker: str):
 
 # google news rss feed reader
 @app.get("/stock/{ticker}/news")
-async def get_stock_news(ticker: str):
+def get_stock_news(ticker: str):
     try:
         query = f"{ticker} ASX stock news"
         encoded_query = urllib.parse.quote(query)
@@ -348,7 +371,7 @@ async def get_stock_news(ticker: str):
         return []
 
 @app.get("/stock/{ticker}/financials")
-async def get_stock_financials(ticker: str):
+def get_stock_financials(ticker: str):
     """fetches annual income statement for the stock"""
     try:
         symbol = f"{ticker.upper()}.AX"
@@ -371,7 +394,7 @@ async def get_stock_financials(ticker: str):
         return {}
 
 @app.get("/stock/{ticker}/corporate")
-async def get_corporate_data(ticker: str):
+def get_corporate_data(ticker: str):
     """
     fetches dividends, officers, and shareholder ownership
     """
@@ -413,8 +436,8 @@ async def get_corporate_data(ticker: str):
             holders = stock.major_holders
             if holders is not None and not holders.empty:
                 for index, row in holders.iterrows():
-                    label = str(row[1]) 
-                    val = str(row[0]).replace('%', '') 
+                    label = str(row.iloc[1]) 
+                    val = str(row.iloc[0]).replace('%', '') 
                     
                     try:
                         val_float = float(val)
@@ -514,9 +537,9 @@ async def analyse_stock(ticker: str):
     """
     try:
         # gather intelligence
-        news = await get_stock_news(ticker) # googlenews scraper
-        financials = await get_stock_financials(ticker) # yfinance fetcher
-        info = await get_stock_info(ticker)
+        news = await asyncio.to_thread(get_stock_news, ticker) # googlenews scraper
+        financials = await asyncio.to_thread(get_stock_financials, ticker) # yfinance fetcher
+        info = await asyncio.to_thread(get_stock_info, ticker)
                 
         news_context = []
         for n in news:
@@ -558,7 +581,7 @@ async def analyse_stock(ticker: str):
         Keep it professional, data-driven, accurate, and under 200 words.
         """
 
-        response = client.chat.completions.create(
+        response = await async_client.chat.completions.create(
             model="google/gemini-3-pro-preview", 
             messages=[
                 {"role": "user", "content": prompt}
@@ -572,7 +595,7 @@ async def analyse_stock(ticker: str):
         return {"report": "## ⚠️ System Offline\nKangaroo Neural Net could not connect to the mainframe."}
     
 @app.get("/stock/{ticker}/valuation")
-async def get_stock_valuation(ticker: str):
+def get_stock_valuation(ticker: str):
     """ 
     fetches inputs for dcf model and analyst targets
     """
@@ -627,7 +650,7 @@ async def get_stock_valuation(ticker: str):
         return {"error": "Valuation data unavailable"}
 
 @app.get("/market-movers")
-async def get_market_movers(db: Session = Depends(get_db)):
+def get_market_movers(db: Session = Depends(get_db)):
     """returns top 5 gainers & losers"""
 
     all_stocks = db.query(models.Stock).all()
@@ -651,7 +674,7 @@ async def get_market_movers(db: Session = Depends(get_db)):
     }
 
 @app.get("/sector-performance")
-async def get_sector_performance(db: Session = Depends(get_db)):
+def get_sector_performance(db: Session = Depends(get_db)):
     """
     nested tree: sector -> stocks
     for the heatmap
@@ -729,12 +752,12 @@ async def toggle_watchlist(ticker: str, db: Session = Depends(get_db)):
     return {"is_watched": stock.is_watched}
 
 @app.get("/watchlist")
-async def get_watchlist(db: Session = Depends(get_db)):
+def get_watchlist(db: Session = Depends(get_db)):
     """returns watched stocks"""
     return db.query(models.Stock).filter(models.Stock.is_watched == True).all()
 
 @app.get("/calendar/upcoming")
-async def get_upcoming_calendar(db: Session = Depends(get_db)):
+def get_upcoming_calendar(db: Session = Depends(get_db)):
     """
     scans watchlist & portfolio for upcoming corporate events (earnings, dividends).
     """
@@ -1210,12 +1233,13 @@ def get_global_markets():
     
     try:
         symbols = [c["symbol"] for c in config]
-        data = yf.download(symbols, period="5d", interval="1h", progress=False)['Close']
+        data = yf.download(symbols, period="5d", interval="1h", progress=False, threads=False)['Close']
         
         results = []
         
         # iterate through config to maintain order
-        for item in config:
+        # use list() to create a copy to avoid runtime errors during iteration
+        for item in list(config):
             symbol = item["symbol"]
             try:
                 # handle single vs multi-index dataframes
@@ -1453,8 +1477,8 @@ async def compare_ai_verdict(req: CompareRequest):
         d2 = await loop.run_in_executor(None, get_data_internal, req.t2)
 
         # get news (async)
-        news1 = (await get_stock_news(req.t1))[:3]
-        news2 = (await get_stock_news(req.t2))[:3]
+        news1 = (await asyncio.to_thread(get_stock_news, req.t1))[:3]
+        news2 = (await asyncio.to_thread(get_stock_news, req.t2))[:3]
 
         news_summary_1 = "\n".join([f"- {n['content']['title']}" for n in news1])
         news_summary_2 = "\n".join([f"- {n['content']['title']}" for n in news2])
@@ -1739,3 +1763,127 @@ async def chat_agent_stream(req: ChatRequest):
                 yield json.dumps({"type": "error", "content": "Processing error. Retrying..."}) + "\n"
                 
     return StreamingResponse(event_generator(), media_type="application/x-ndjson")
+
+@app.get("/briefing/generate")
+async def generate_briefing_endpoint(db: Session = Depends(get_db)):
+    """
+    aggregates relevant data & generates the morning briefing
+    """
+    global BRIEFING_CACHE
+    
+    # check cache (3600s = 1 hour)
+    current_time = datetime.now().timestamp()
+    if BRIEFING_CACHE["data"] and (current_time - BRIEFING_CACHE["timestamp"] < 3600):
+        print("📝 [Briefing] serving from cache (expires in {:.0f}m)".format((3600 - (current_time - BRIEFING_CACHE["timestamp"])) / 60))
+        return BRIEFING_CACHE["data"]
+
+    try:
+        print("📝 [Briefing] generating new report...")
+        
+        # global markets
+        global_markets_task = asyncio.to_thread(get_global_markets)
+        
+        # watchlist & holdings
+        watchlist = await asyncio.to_thread(get_watchlist, db)
+        holdings = db.query(models.Holding).all() # This is now sync and fast enough, but could be offloaded too
+        portfolio_tickers = [h.ticker for h in holdings]
+        
+        # calendar & market movers (run sequentially to avoid DB session thread-safety issues, but in threads to keep loop free)
+        calendar = await asyncio.to_thread(get_upcoming_calendar, db) 
+        movers = await asyncio.to_thread(get_market_movers, db) 
+        
+        # gather news, top 3 holdings + top 2 watchlist items
+        news_tickers = []
+        if portfolio_tickers:
+            news_tickers.extend(portfolio_tickers[:3])
+        if watchlist:
+            # avoid dupes
+            for w in watchlist[:2]:
+                if w.ticker not in news_tickers:
+                    news_tickers.append(w.ticker)
+                    
+        news_tasks = [asyncio.to_thread(get_stock_news, t) for t in news_tickers]
+        # gather news + global markets
+        results = await asyncio.gather(global_markets_task, *news_tasks)
+        global_markets = results[0]
+        news_results = results[1:]
+        
+        # flatten and format news
+        news_context = []
+        for i, ticker in enumerate(news_tickers):
+            items = news_results[i][:2] # take top 2 headlines
+            for item in items:
+                news_context.append(f"[{ticker}] {item['content']['title']}")
+        
+        # signal scanner
+        scan_tickers = list(set([f"{t.upper()}.AX" for t in portfolio_tickers] + [f"{s.ticker}.AX" for s in watchlist]))
+        scanner_results = []
+        if scan_tickers:
+            # run scanner in thread pool to avoid blocking
+            scanner_results = await asyncio.to_thread(scan_market, scan_tickers)
+        
+        # package data
+        data = {
+            "timestamp": get_current_time(),
+            "global_markets": global_markets,
+            "portfolio": [{"ticker": h.ticker, "shares": h.shares, "avg_cost": h.avg_cost} for h in holdings],
+            "watchlist": [{"ticker": w.ticker, "price": w.price, "change": w.change_percent} for w in watchlist],
+            "calendar": calendar,
+            "movers": movers,
+            "signals": scanner_results,
+            "news": news_context
+        }
+        
+        # generate briefing
+        result_json = await asyncio.to_thread(briefing.generate_briefing_content, data)
+
+        try:
+            final_data = json.loads(result_json)
+            
+            # update cache
+            BRIEFING_CACHE["data"] = final_data
+            BRIEFING_CACHE["timestamp"] = datetime.now().timestamp()
+            
+            return final_data
+        except:
+            return {"error": "AI parsing failed", "raw": result_json}
+            
+    except Exception as e:
+        print(f"Briefing Endpoint Error: {e}")
+        return {
+            "overnight_wrap": "<p>System unavailable.</p>",
+            "portfolio_impact": "<p>Briefing engine encountered an error.</p>",
+            "action_items": f"<ul><li>Error: {str(e)}</li></ul>",
+            "vibe": "System Error"
+        }
+
+@app.get("/stock/{ticker}/filings")
+async def get_filings_endpoint(ticker: str):
+    """
+    scrapes recent asx announcements for the ticker using playwright
+    """
+    return await filings.get_recent_filings(ticker)
+
+class AnalyseRequest(BaseModel):
+    url: str
+    ticker: str
+
+@app.post("/filings/analyse")
+async def analyse_filing_endpoint(req: AnalyseRequest, db: Session = Depends(get_db)):
+    """
+    analyse filing pdf w/ gemini
+    """
+    return await filings.analyse_pdf(req.url, req.ticker, db)
+
+class ChatRequest(BaseModel):
+    url: str
+    history: list
+    question: str
+
+@app.post("/filings/chat")
+async def chat_filing_endpoint(req: ChatRequest):
+    """
+    chat with document
+    """
+    answer = await filings.chat_with_document(req.url, req.history, req.question)
+    return {"answer": answer}
