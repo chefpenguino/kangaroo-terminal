@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Loader2, XCircle, TrendingUp, TrendingDown, Wallet, ShieldCheck, Activity, PieChart as PieIcon, AlertTriangle } from "lucide-react";
+import { Loader2, XCircle, TrendingUp, TrendingDown, Wallet, ShieldCheck, Activity, PieChart as PieIcon, AlertTriangle, Target, X } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip as ReTooltip, PieChart, Pie, Cell } from "recharts";
 import Link from "next/link";
 
@@ -36,6 +36,7 @@ interface PortfolioClientProps {
     initialAnalytics: any[];
     initialRisk: any;
     initialBenchmark: any;
+    initialOrders: any[];
 }
 
 export default function PortfolioClient({
@@ -43,14 +44,24 @@ export default function PortfolioClient({
     initialAccount,
     initialAnalytics,
     initialRisk,
-    initialBenchmark
+    initialBenchmark,
+    initialOrders
 }: PortfolioClientProps) {
     const [holdings, setHoldings] = useState<any[]>(initialHoldings);
     const [analytics, setAnalytics] = useState<any[]>(initialAnalytics);
     const [account, setAccount] = useState<any>(initialAccount);
     const [riskData, setRiskData] = useState<any>(initialRisk);
     const [benchmarkData, setBenchmarkData] = useState<any>(initialBenchmark);
-    const [loading, setLoading] = useState(false);
+    const [orders, setOrders] = useState<any[]>(initialOrders);
+    const [loading, setLoading] = useState(true);
+
+    const cleanName = (name: string, ticker: string) => {
+        if (!name) return ticker;
+        if (name.toUpperCase().startsWith(ticker.toUpperCase())) {
+            return name.slice(ticker.length).trim();
+        }
+        return name;
+    };
 
     // stats
     const totalStockValue = holdings.reduce((sum: any, h: any) => sum + h.market_value, 0);
@@ -59,12 +70,13 @@ export default function PortfolioClient({
 
     const fetchPortfolio = async () => {
         try {
-            const [portRes, accRes, analyticsRes, riskRes, benchRes] = await Promise.all([
+            const [portRes, accRes, analyticsRes, riskRes, benchRes, ordersRes] = await Promise.all([
                 fetch("http://localhost:8000/portfolio"),
                 fetch("http://localhost:8000/account"),
                 fetch("http://localhost:8000/portfolio/analytics"),
                 fetch("http://localhost:8000/portfolio/risk"),
-                fetch("http://localhost:8000/portfolio/benchmark")
+                fetch("http://localhost:8000/portfolio/benchmark"),
+                fetch("http://localhost:8000/orders/pending")
             ]);
 
             setHoldings(await portRes.json());
@@ -72,6 +84,7 @@ export default function PortfolioClient({
             setAnalytics(await analyticsRes.json());
             setRiskData(await riskRes.json());
             setBenchmarkData(await benchRes.json());
+            setOrders(await ordersRes.json());
         } catch (e) { console.error(e); }
         finally { setLoading(false); }
     };
@@ -81,6 +94,13 @@ export default function PortfolioClient({
         const interval = setInterval(fetchPortfolio, 3000);
         return () => clearInterval(interval);
     }, []);
+
+    const cancelOrder = async (orderId: number) => {
+        try {
+            const res = await fetch(`http://localhost:8000/orders/cancel/${orderId}`, { method: "DELETE" });
+            if (res.ok) fetchPortfolio();
+        } catch (e) { console.error(e); }
+    };
 
     const closePosition = async (ticker: string, shares: number, price: number) => {
         if (!confirm(`Close ${ticker}?`)) return;
@@ -151,10 +171,10 @@ export default function PortfolioClient({
                 </div>
             </div>
 
-            {/* holdings table */}
+            {/* holdings & orders table */}
             <div className="luxury-card rounded-2xl overflow-hidden border border-white/5">
                 <div className="p-4 border-b border-white/5 bg-[#15100d] flex justify-between items-center">
-                    <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wide pl-2">Open Positions</h3>
+                    <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wide pl-2">Portfolio Activity</h3>
                 </div>
 
                 <div className="overflow-x-auto">
@@ -162,18 +182,20 @@ export default function PortfolioClient({
                         <thead>
                             <tr className="bg-white/5 text-[10px] text-gray-500 uppercase tracking-wider">
                                 <th className="p-4 font-medium">Asset</th>
+                                <th className="p-4 font-medium">Status / Type</th>
                                 <th className="p-4 font-medium text-right">Qty</th>
-                                <th className="p-4 font-medium text-right">Avg Cost</th>
+                                <th className="p-4 font-medium text-right">Basis / Limit</th>
                                 <th className="p-4 font-medium text-right">Price</th>
-                                <th className="p-4 font-medium text-right">Market Value</th>
-                                <th className="p-4 font-medium text-right">Return</th>
+                                <th className="p-4 font-medium text-right">Value</th>
+                                <th className="p-4 font-medium text-right">Return / Status</th>
                                 <th className="p-4 font-medium text-center">Action</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-white/5">
+                            {/* regular holdings */}
                             {holdings.map((h) => (
-                                <tr key={h.id} className="hover:bg-white/5 transition-colors group">
-                                    <td className="p-4">
+                                <tr key={`holding-${h.id}`} className="hover:bg-white/10 transition-colors group">
+                                    <td className="p-4 border-l-2 border-blue-500/30">
                                         <Link href={`/stock/${h.ticker}`} className="flex items-center gap-3">
                                             <div className="w-8 h-8 rounded-full bg-white p-px shadow-sm">
                                                 <img
@@ -184,12 +206,17 @@ export default function PortfolioClient({
                                             </div>
                                             <div>
                                                 <span className="block font-bold text-white text-sm group-hover:text-primary transition-colors">{h.ticker}</span>
-                                                <span className="block text-[10px] text-gray-500">{h.name}</span>
+                                                <span className="block text-[10px] text-gray-500">{cleanName(h.name, h.ticker)}</span>
                                             </div>
                                         </Link>
                                     </td>
+                                    <td className="p-4">
+                                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 uppercase">
+                                            Position
+                                        </span>
+                                    </td>
                                     <td className="p-4 text-right font-mono text-gray-400 text-sm">{h.shares}</td>
-                                    <td className="p-4 text-right font-mono text-gray-400 text-sm">${h.avg_cost.toFixed(2)}</td>
+                                    <td className="p-4 text-right font-mono text-primary font-bold text-sm">${h.avg_cost.toFixed(2)}</td>
                                     <td className="p-4 text-right font-mono text-white text-sm">${h.current_price.toFixed(2)}</td>
                                     <td className="p-4 text-right font-mono text-white font-bold text-sm">${h.market_value.toLocaleString()}</td>
                                     <td className="p-4 text-right">
@@ -205,14 +232,99 @@ export default function PortfolioClient({
                                     <td className="p-4 text-center">
                                         <button
                                             onClick={() => closePosition(h.ticker, h.shares, h.current_price)}
-                                            className="p-2 bg-white/5 hover:bg-red-500/20 text-gray-500 hover:text-red-500 rounded-lg transition-colors"
+                                            className="p-2 bg-white/5 hover:bg-red-500/10 text-gray-500 hover:text-red-500 rounded-lg transition-all"
                                             title="Close Position"
                                         >
-                                            <XCircle size={16} />
+                                            <X size={14} />
                                         </button>
                                     </td>
                                 </tr>
                             ))}
+
+                            {/* pending orders */}
+                            {[...orders].sort((a, b) => {
+                                if (a.order_type === 'STOP_LOSS' && b.order_type !== 'STOP_LOSS') return -1;
+                                if (a.order_type !== 'STOP_LOSS' && b.order_type === 'STOP_LOSS') return 1;
+                                return 0;
+                            }).map((order) => (
+                                <tr key={`order-${order.id}`} className="hover:bg-white/10 transition-colors group">
+                                    <td className="p-4 border-l-2 border-primary/30">
+                                        <Link href={`/stock/${order.ticker}`} className="flex items-center gap-3">
+                                            <div className="w-8 h-8 rounded-full bg-white p-px shadow-sm">
+                                                <img
+                                                    src={`https://files.marketindex.com.au/xasx/96x96-png/${order.ticker.toLowerCase()}.png`}
+                                                    className="w-full h-full rounded-full object-cover"
+                                                    onError={(e) => (e.currentTarget.style.display = 'none')}
+                                                />
+                                            </div>
+                                            <div>
+                                                <span className="block font-bold text-white text-sm group-hover:text-primary transition-colors">{order.ticker}</span>
+                                                <span className="block text-[10px] text-gray-500">{cleanName(order.name, order.ticker)}</span>
+                                            </div>
+                                        </Link>
+                                    </td>
+                                    <td className="p-4">
+                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${order.order_type === 'LIMIT_BUY' ? 'bg-success/10 text-success border-success/20' :
+                                            order.order_type === 'LIMIT_SELL' ? 'bg-primary/10 text-primary border-primary/20' :
+                                                'bg-danger/10 text-danger border-danger/20'
+                                            }`}>
+                                            {order.order_type.replace('_', ' ')}
+                                        </span>
+                                    </td>
+                                    <td className="p-4 text-right font-mono text-gray-400 text-sm">{order.shares}</td>
+                                    <td className="p-4 text-right">
+                                        <div className="flex flex-col items-end">
+                                            <span className="font-mono text-primary text-sm font-bold">${order.limit_price.toFixed(2)}</span>
+                                            {order.order_type === 'STOP_LOSS' && order.avg_cost > 0 && (
+                                                <span className="text-[10px] text-gray-500 font-mono">Entry: ${order.avg_cost.toFixed(2)}</span>
+                                            )}
+                                        </div>
+                                    </td>
+                                    <td className="p-4 text-right font-mono text-white text-sm">${order.current_price.toFixed(2)}</td>
+                                    <td className="p-4 text-right font-mono text-white/50 text-sm">${(order.shares * order.current_price).toLocaleString()}</td>
+                                    <td className="p-4 text-right">
+                                        <div className="flex flex-col items-end">
+                                            {order.order_type === 'STOP_LOSS' && order.avg_cost > 0 ? (
+                                                <div className={`flex flex-col items-end ${order.current_price >= order.avg_cost ? "text-success" : "text-danger"}`}>
+                                                    <span className="font-bold text-sm">
+                                                        {order.current_price >= order.avg_cost ? "+" : ""}{((order.current_price - order.avg_cost) * order.shares).toLocaleString()}
+                                                    </span>
+                                                    <span className="text-[10px] opacity-80">
+                                                        {((order.current_price - order.avg_cost) / order.avg_cost * 100).toFixed(2)}%
+                                                    </span>
+                                                </div>
+                                            ) : (
+                                                <>
+                                                    <span className={`text-[10px] font-bold uppercase tracking-widest ${order.order_type === 'STOP_LOSS' ? 'text-danger/70' : 'text-gray-500'
+                                                        }`}>
+                                                        {order.order_type === 'STOP_LOSS' ? 'PROTECTION ACTIVE' : 'WAITING FOR FILL'}
+                                                    </span>
+                                                    {order.order_type === 'LIMIT_BUY' && order.current_price <= order.limit_price && (
+                                                        <span className="text-[9px] text-success animate-pulse">MATCHING...</span>
+                                                    )}
+                                                </>
+                                            )}
+                                        </div>
+                                    </td>
+                                    <td className="p-4 text-center">
+                                        <button
+                                            onClick={() => cancelOrder(order.id)}
+                                            className="p-2 bg-white/5 hover:bg-red-500/10 text-gray-500 hover:text-red-500 rounded-lg transition-all"
+                                            title="Cancel Order"
+                                        >
+                                            <X size={14} />
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))}
+
+                            {holdings.length === 0 && orders.length === 0 && (
+                                <tr>
+                                    <td colSpan={8} className="p-20 text-center text-gray-600 italic">
+                                        No active positions or pending orders.
+                                    </td>
+                                </tr>
+                            )}
                         </tbody>
                     </table>
                 </div>
@@ -492,6 +604,6 @@ export default function PortfolioClient({
                     </div>
                 )}
             </div>
-        </div>
+        </div >
     );
 }

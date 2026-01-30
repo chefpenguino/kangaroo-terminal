@@ -31,7 +31,7 @@ Institutional investors pay **$24,000/year** for terminals that aggregate data a
 A unified, friendly dashboard that:
 1.  **Aggregates Data:** Real-time price, volume, and sector data for ASX listings.
 2.  **Parses Documents:** Automatically scrapes and extracts text from ASX PDF announcements (Annual Reports, Updates).
-3.  **Analyses Sentiment:** Uses LLMs (Gemini API) to summarise lengthy reports into key bullet points and risk factors.
+3.  **Analyses Sentiment:** Uses LLMs (gemini 3 pro through `ai.hackclub.com`) to summarise lengthy reports into key bullet points and risk factors.
 4.  **Models Valuation:** Provides interactive DCF (Discounted Cash Flow) sandboxes for students to test valuation assumptions.
 
 ## 🛠 Tech Stack

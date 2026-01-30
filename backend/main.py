@@ -1265,79 +1265,105 @@ class Order(BaseModel):
     price: float # limit price or current price
     type: str # "BUY" or "SELL"
 
+from trade_engine import internal_execute_trade
+
+def internal_execute_trade_wrapper(db: Session, ticker: str, shares: int, price: float, trade_type: str):
+    return internal_execute_trade(db, ticker, shares, price, trade_type)
+
 @app.post("/trade")
 async def execute_trade(order: Order, db: Session = Depends(get_db)):
     """
-    executes a trade with validation:
-    checks market hours
-    checks sufficient funds
-    updates portfolio cost basis
-    updates 'last price' 
+    executes a market trade
     """
-
-    # market always open for the sake of testing; uncomment this later
-    # if not is_market_open():
-    #     raise HTTPException(status_code=400, detail="Market is Closed. Orders cannot be executed.")
-
-    account = db.query(models.Account).first()
-    if not account:
-        account = models.Account(balance=100000.0)
-        db.add(account)
-    
-    total_cost = order.shares * order.price
-
-    if order.type == "BUY":
-        if account.balance < total_cost:
-            raise HTTPException(status_code=400, detail=f"Insufficient Buying Power. Cost: ${total_cost}, Available: ${account.balance}")
+    try:
+        new_balance = internal_execute_trade(db, order.ticker.upper(), order.shares, order.price, order.type)
         
-        # deduct cash
-        account.balance -= total_cost
-        
-        # update holding
-        holding = db.query(models.Holding).filter(models.Holding.ticker == order.ticker).first()
-        if holding:
-            # weighted average cost logic
-            current_total_value = holding.shares * holding.avg_cost
-            new_total_value = current_total_value + total_cost
-            total_shares = holding.shares + order.shares
+        # update the stock price in DB immediately for market trades
+        stock = db.query(models.Stock).filter(models.Stock.ticker == order.ticker.upper()).first()
+        if stock:
+            stock.price = order.price
+            stock.last_updated = datetime.now()
             
-            holding.shares = total_shares
-            holding.avg_cost = new_total_value / total_shares
-        else:
-            new_holding = models.Holding(ticker=order.ticker, shares=order.shares, avg_cost=order.price)
-            db.add(new_holding)
+        db.commit()
+        return {"message": "Order Filled", "new_balance": new_balance}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
-    elif order.type == "SELL":
-        holding = db.query(models.Holding).filter(models.Holding.ticker == order.ticker).first()
-        if not holding or holding.shares < order.shares:
-            raise HTTPException(status_code=400, detail="Insufficient Shares")
-        
-        # add cash
-        account.balance += total_cost
-        
-        # deduct shares
-        holding.shares -= order.shares
-        if holding.shares == 0:
-            db.delete(holding)
-
-    # update the stock price
-    # we assume the trade executed at the provided price, so that IS the latest market price.
-    stock = db.query(models.Stock).filter(models.Stock.ticker == order.ticker).first()
-    if stock:
-        stock.price = order.price
-        stock.last_updated = datetime.now()
-
-    # record history
-    tx = models.TransactionHistory(
-        ticker=order.ticker, 
-        type=order.type, 
-        shares=order.shares, 
-        price=order.price
+@app.post("/orders/create")
+async def create_pending_order(order: Order, db: Session = Depends(get_db)):
+    """
+    creates a pending order (limit buy/sell, stop loss)
+    """
+    # frontend will send e.g. "LIMIT_BUY", "LIMIT_SELL", "STOP_LOSS"
+    new_order = models.PendingOrder(
+        ticker=order.ticker.upper(),
+        order_type=order.type, # expects LIMIT_BUY etc
+        shares=order.shares,
+        limit_price=order.price,
+        status="PENDING"
     )
-    db.add(tx)
+    db.add(new_order)
     db.commit()
+    return {"message": "Order Created", "order_id": new_order.id}
+
+@app.get("/orders/pending")
+async def get_pending_orders(db: Session = Depends(get_db)):
+    orders = db.query(models.PendingOrder).filter(models.PendingOrder.status == "PENDING").all()
+    res = []
+    for o in orders:
+        stock = db.query(models.Stock).filter(models.Stock.ticker == o.ticker).first()
+        holding = db.query(models.Holding).filter(models.Holding.ticker == o.ticker).first()
+        res.append({
+            "id": o.id,
+            "ticker": o.ticker,
+            "name": stock.name if stock else o.ticker,
+            "order_type": o.order_type,
+            "shares": o.shares,
+            "limit_price": o.limit_price,
+            "status": o.status,
+            "created_at": o.created_at,
+            "current_price": stock.price if stock else 0.0,
+            "avg_cost": holding.avg_cost if holding else 0.0
+        })
+    return res
+
+@app.get("/orders/pending/{ticker}")
+async def get_stock_pending_orders(ticker: str, db: Session = Depends(get_db)):
+    orders = db.query(models.PendingOrder).filter(
+        models.PendingOrder.ticker == ticker.upper(),
+        models.PendingOrder.status == "PENDING"
+    ).all()
+    stock = db.query(models.Stock).filter(models.Stock.ticker == ticker.upper()).first()
+    holding = db.query(models.Holding).filter(models.Holding.ticker == ticker.upper()).first()
+    res = []
+    for o in orders:
+        res.append({
+            "id": o.id,
+            "ticker": o.ticker,
+            "name": stock.name if stock else o.ticker,
+            "order_type": o.order_type,
+            "shares": o.shares,
+            "limit_price": o.limit_price,
+            "status": o.status,
+            "created_at": o.created_at,
+            "current_price": stock.price if stock else 0.0,
+            "avg_cost": holding.avg_cost if holding else 0.0
+        })
+    return res
+
+@app.delete("/orders/cancel/{order_id}")
+async def cancel_order(order_id: int, db: Session = Depends(get_db)):
+    order = db.query(models.PendingOrder).filter(models.PendingOrder.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
     
-    return {"message": "Order Filled", "new_balance": account.balance}
+    order.status = "CANCELLED"
+    db.commit()
+    return {"message": "Order Cancelled"}
+
+@app.get("/orders/history")
+async def get_order_history(db: Session = Depends(get_db)):
+    return db.query(models.PendingOrder).filter(models.PendingOrder.status != "PENDING").order_by(models.PendingOrder.created_at.desc()).limit(50).all()
 
 @app.get("/transactions")
 async def get_transactions(db: Session = Depends(get_db)):

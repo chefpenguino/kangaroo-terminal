@@ -7,6 +7,7 @@ from database import SessionLocal
 import models
 from scraper import ASXScraper
 import yfinance as yf # type: ignore
+from trade_engine import internal_execute_trade
 
 # sydney timezone
 
@@ -106,10 +107,53 @@ async def update_database(data: list[dict]):
                 stock.last_updated = datetime.now()
         
         db.commit()
+        
+        # after prices update, check if any orders were triggered
+        await check_matching_engine(db)
+
     except Exception as e:
         print(f"db error: {e}")
     finally:
         db.close()
+
+async def check_matching_engine(db: Session):
+    """
+    checks all pending orders against current market prices
+    """
+    orders = db.query(models.PendingOrder).filter(models.PendingOrder.status == "PENDING").all()
+    if not orders:
+        return
+
+    for order in orders:
+        stock = db.query(models.Stock).filter(models.Stock.ticker == order.ticker).first()
+        if not stock:
+            continue
+        
+        current_price = stock.price
+        triggered = False
+        
+        # execution logic
+        if order.order_type == "LIMIT_BUY" and current_price <= order.limit_price:
+            triggered = True
+        elif order.order_type == "LIMIT_SELL" and current_price >= order.limit_price:
+            triggered = True
+        elif order.order_type == "STOP_LOSS" and current_price <= order.limit_price:
+            triggered = True
+            
+        if triggered:
+            try:
+                # convert internal type
+                exec_type = "BUY" if "BUY" in order.order_type else "SELL"
+                # use the current_price for the fill 
+                internal_execute_trade(db, order.ticker, order.shares, current_price, exec_type)
+                
+                order.status = "FILLED"
+                order.filled_at = datetime.now()
+                print(f"[✏️] OMS: order filled - {order.order_type} {order.shares} {order.ticker} @ {current_price}")
+            except Exception as e:
+                print(f"[✏️] OMS: fill failed for {order.ticker} - {e}")
+    
+    db.commit()
 
 async def run_market_engine():
     """main loop w/ check for market open"""

@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Loader2, X, BrainCircuit, Calculator, Star, ChevronDown, Layers, Plus, Search, Users, Briefcase, PieChart as PieIcon, Target, Info, Bell, FileText, Download, Eye, Calendar } from "lucide-react";
+import { ArrowLeft, Loader2, X, BrainCircuit, Calculator, Star, ChevronDown, Layers, Plus, Search, Users, Briefcase, PieChart as PieIcon, Target, Info, Bell, FileText, Download, Eye, Calendar, DollarSign } from "lucide-react";
 import Link from "next/link";
 import AlertModal from "../../components/AlertModal";
 import { createChart, ColorType, CandlestickSeries, HistogramSeries, LineSeries, createSeriesMarkers } from 'lightweight-charts';
@@ -91,24 +91,56 @@ const OrderTicket = ({ ticker, currentPrice, onTrade }: any) => {
   const [type, setType] = useState("BUY"); // BUY | SELL
   const [shares, setShares] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [orderCategory, setOrderCategory] = useState("MARKET"); // MARKET | LIMIT | STOP
+  const [limitPrice, setLimitPrice] = useState(currentPrice);
 
-  const total = shares * currentPrice;
+  // sync limit price with current price if it's market
+  useEffect(() => {
+    if (orderCategory === "MARKET") {
+      setLimitPrice(currentPrice);
+    }
+  }, [currentPrice, orderCategory]);
+
+  const total = shares * (orderCategory === "MARKET" ? currentPrice : limitPrice);
 
   const executeOrder = async () => {
     setLoading(true);
     try {
-      const res = await fetch("http://localhost:8000/trade", {
+      let endpoint = "http://localhost:8000/trade";
+      let payload: any = { ticker: ticker.toUpperCase(), shares, price: currentPrice, type };
+
+      if (orderCategory !== "MARKET") {
+        endpoint = "http://localhost:8000/orders/create";
+        // for pending orders: type  LIMIT_BUY, LIMIT_SELL, or STOP_LOSS
+        let pendingType = "";
+        if (orderCategory === "LIMIT") {
+          pendingType = type === "BUY" ? "LIMIT_BUY" : "LIMIT_SELL";
+        } else {
+          pendingType = "STOP_LOSS";
+        }
+        payload = {
+          ticker: ticker.toUpperCase(),
+          shares,
+          price: limitPrice,
+          type: pendingType
+        };
+      }
+
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticker, shares, price: currentPrice, type })
+        body: JSON.stringify(payload)
       });
+
       if (res.ok) {
         onTrade();
-        toast.success(`Order Filled: ${type} ${shares} ${ticker}`, {
-          description: `@ $${currentPrice.toFixed(2)}`,
+        const msg = orderCategory === "MARKET" ? "Order Filled" : "Order Created";
+        toast.success(`${msg}: ${type} ${shares} ${ticker}`, {
+          description: `@ $${(orderCategory === "MARKET" ? currentPrice : limitPrice).toFixed(2)}`,
           duration: 4000,
         });
-        setShares(1);
+        // reset if market, keep price if limit
+        if (orderCategory === "MARKET") setShares(1);
       } else {
         const err = await res.json();
         toast.error("Order Failed", {
@@ -125,45 +157,73 @@ const OrderTicket = ({ ticker, currentPrice, onTrade }: any) => {
 
   return (
     <div className="bg-surface border border-white/10 rounded-xl p-6 h-full flex flex-col">
-      <div className="flex bg-black/20 p-1 rounded-lg mb-6">
+      {/* buy/sell toggle */}
+      <div className="flex bg-black/20 p-1 rounded-lg mb-4">
         <button
           onClick={() => setType("BUY")}
-          className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${type === "BUY" ? "bg-success text-white shadow-lg" : "text-gray-500 hover:text-white"}`}
+          className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${type === "BUY" ? "bg-success text-white shadow-lg" : "text-gray-500 hover:text-white"}`}
         >
           BUY
         </button>
         <button
           onClick={() => setType("SELL")}
-          className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${type === "SELL" ? "bg-danger text-white shadow-lg" : "text-gray-500 hover:text-white"}`}
+          className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${type === "SELL" ? "bg-danger text-white shadow-lg" : "text-gray-500 hover:text-white"}`}
         >
           SELL
         </button>
       </div>
 
+      {/* order category toggle */}
+      <div className="flex gap-2 mb-6">
+        {["MARKET", "LIMIT", "STOP"].map((cat) => (
+          <button
+            key={cat}
+            onClick={() => setOrderCategory(cat)}
+            className={`flex-1 py-1 text-[10px] font-bold rounded-md border transition-all ${orderCategory === cat
+              ? "bg-primary/20 border-primary text-primary"
+              : "bg-transparent border-white/5 text-gray-500 hover:text-gray-300"}`}
+          >
+            {cat}
+          </button>
+        ))}
+      </div>
+
       {/* price display */}
-      <div className="flex justify-between items-center mb-6">
-        <span className="text-gray-400 text-sm">Market Price</span>
-        <span className="text-2xl font-bold text-white font-mono">${currentPrice.toFixed(2)}</span>
+      <div className="flex justify-between items-center mb-4">
+        <span className="text-gray-400 text-xs">{orderCategory === "MARKET" ? "Market Price" : "Execution Price"}</span>
+        <span className="text-xl font-bold text-white font-mono">${(orderCategory === "MARKET" ? currentPrice : limitPrice).toFixed(2)}</span>
       </div>
 
       {/* inputs */}
-      <div className="space-y-4 mb-8">
+      <div className="space-y-3 mb-6">
         <div>
           <label className="block text-[10px] uppercase font-bold text-gray-500 mb-1">Shares</label>
-          <div className="flex items-center gap-2">
-            <input
-              type="number" min="1"
-              value={shares}
-              onChange={(e) => setShares(parseInt(e.target.value) || 0)}
-              className="w-full bg-black/20 border border-white/10 rounded-lg p-3 text-white font-mono focus:border-primary outline-none"
-            />
-          </div>
+          <input
+            type="number" min="1"
+            value={shares}
+            onChange={(e) => setShares(parseInt(e.target.value) || 0)}
+            className="w-full bg-black/20 border border-white/10 rounded-lg p-2.5 text-white font-mono focus:border-primary outline-none text-sm"
+          />
         </div>
 
-        <div className="pt-4 border-t border-white/5">
+        {orderCategory !== "MARKET" && (
+          <div>
+            <label className="block text-[10px] uppercase font-bold text-gray-500 mb-1">
+              {orderCategory === "LIMIT" ? "Limit Price" : "Stop Price"}
+            </label>
+            <input
+              type="number" step="0.01"
+              value={limitPrice}
+              onChange={(e) => setLimitPrice(parseFloat(e.target.value) || 0)}
+              className="w-full bg-black/20 border border-white/10 rounded-lg p-2.5 text-white font-mono focus:border-primary outline-none text-sm"
+            />
+          </div>
+        )}
+
+        <div className="pt-3 border-t border-white/5">
           <div className="flex justify-between items-center">
-            <span className="text-sm font-bold text-gray-400">Est. Total</span>
-            <span className="text-xl font-bold text-white font-mono">${total.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+            <span className="text-xs font-bold text-gray-400">Est. Total</span>
+            <span className="text-lg font-bold text-white font-mono">${total.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
           </div>
         </div>
       </div>
@@ -171,13 +231,48 @@ const OrderTicket = ({ ticker, currentPrice, onTrade }: any) => {
       {/* action button */}
       <button
         onClick={executeOrder}
-        className={`w-full py-4 rounded-xl font-bold text-lg tracking-wide shadow-lg transition-all hover:scale-[1.02] active:scale-[0.98] ${type === "BUY"
+        className={`w-full py-3.5 rounded-xl font-bold text-md tracking-wide shadow-lg transition-all hover:scale-[1.02] active:scale-[0.98] ${type === "BUY"
           ? "bg-success hover:bg-green-600 text-white shadow-green-900/20"
           : "bg-danger hover:bg-red-600 text-white shadow-red-900/20"
           }`}
       >
-        {loading ? <Loader2 className="animate-spin mx-auto" /> : `${type} ${ticker}`}
+        {loading ? <Loader2 className="animate-spin mx-auto" /> : `${orderCategory === "MARKET" ? "" : orderCategory} ${type} ${ticker}`}
       </button>
+    </div>
+  );
+};
+
+const PendingOrdersList = ({ orders, onCancel }: any) => {
+  if (orders.length === 0) return null;
+
+  return (
+    <div className="mt-4 pt-4 border-t border-white/5">
+      <div className="flex items-center gap-2 mb-3 px-1">
+        <DollarSign size={12} className="text-primary" />
+        <h4 className=" text-[10px] font-bold text-gray-500 uppercase tracking-widest">Active Orders</h4>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {orders.map((order: any) => (
+          <div key={order.id} className="flex items-center justify-between p-2 bg-black/20 rounded-lg border border-white/5 hover:border-white/10 group transition-all">
+            <div className="flex items-center gap-2.5">
+              <div className={`w-1.5 h-1.5 rounded-full ${order.order_type === 'LIMIT_BUY' ? 'bg-success' : order.order_type === 'LIMIT_SELL' ? 'bg-primary' : 'bg-danger'}`} />
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-black text-white leading-none">{order.order_type.replace('_', ' ')}</span>
+                  <span className="text-[9px] text-gray-500 font-bold leading-none">{order.shares}</span>
+                </div>
+                <div className="text-xs font-bold text-primary font-mono mt-0.5">${order.limit_price.toFixed(2)}</div>
+              </div>
+            </div>
+            <button
+              onClick={() => onCancel(order.id)}
+              className="p-1.5 text-gray-600 hover:text-danger hover:bg-danger/10 rounded-md transition-all opacity-0 group-hover:opacity-100"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 };
@@ -206,7 +301,9 @@ export default function StockDetailClient({
   initialInstitutional,
   initialIsWatched
 }: StockDetailProps) {
-  const [data, setData] = useState<any[]>(initialHistory || []);
+  // history state
+  const [data, setData] = useState<any[]>(initialHistory);
+  const [refreshHistory, setRefreshHistory] = useState(0);
   const [loading, setLoading] = useState(false);
   const [imageError, setImageError] = useState(false);
   const [companyInfo, setCompanyInfo] = useState<any>(initialInfo);
@@ -413,11 +510,15 @@ export default function StockDetailClient({
       }
     };
     fetchHistory();
-  }, [ticker, activeTf]);
+  }, [ticker, activeTf, refreshHistory]);
 
   // transactions state
   const [transactions, setTransactions] = useState<any[]>([]);
   const [refreshTransactions, setRefreshTransactions] = useState(0);
+
+  // pending orders state
+  const [pendingOrders, setPendingOrders] = useState<any[]>([]);
+  const [refreshOrders, setRefreshOrders] = useState(0);
 
   // fetch transactions
   useEffect(() => {
@@ -432,6 +533,39 @@ export default function StockDetailClient({
     };
     fetchTransactions();
   }, [ticker, refreshTransactions]);
+
+  const handleCancelOrder = async (orderId: number) => {
+    try {
+      const res = await fetch(`http://localhost:8000/orders/cancel/${orderId}`, { method: "DELETE" });
+      if (res.ok) {
+        toast.success("Order Cancelled");
+        setRefreshOrders(prev => prev + 1);
+      }
+    } catch (e) { console.error(e); }
+  };
+
+  // fetch pending orders
+  useEffect(() => {
+    const fetchPending = async () => {
+      try {
+        const res = await fetch(`http://localhost:8000/orders/pending/${ticker}`);
+        if (res.ok) {
+          const json = await res.json();
+          setPendingOrders(json);
+        }
+      } catch (e) { console.error(e); }
+    };
+    fetchPending();
+  }, [ticker, refreshOrders]);
+
+  // background polling for orders and transactions
+  useEffect(() => {
+    const poll = setInterval(() => {
+      setRefreshTransactions(prev => prev + 1);
+      setRefreshOrders(prev => prev + 1);
+    }, 5000);
+    return () => clearInterval(poll);
+  }, []);
 
   // render chart 
   useEffect(() => {
@@ -476,12 +610,8 @@ export default function StockDetailClient({
     });
     mainSeries.setData(data);
 
-    // Trade Markers
     if (transactions.length > 0) {
       // convert transactions to markers
-      // timestamp needs to match chart data format.
-      // assuming chart data is YYYY-MM-DD string or unix.
-      // transactions have timestamp string "2023-01-01T10:00:00"
 
       const markers: any[] = transactions.map(t => {
         // format date to YYYY-MM-DD
@@ -558,6 +688,21 @@ export default function StockDetailClient({
       }
     }
 
+    // pending orders (price lines)
+    pendingOrders.forEach(order => {
+      const color = order.order_type === 'LIMIT_BUY' ? '#4E9F76' :
+        order.order_type === 'LIMIT_SELL' ? '#C68E56' : '#D65A5A';
+
+      mainSeries.createPriceLine({
+        price: order.limit_price,
+        color: color,
+        lineWidth: 2,
+        lineStyle: 2, // dashed
+        axisLabelVisible: true,
+        title: `${order.order_type.replace('_', ' ')} (${order.shares})`,
+      });
+    });
+
     const handleResize = () => {
       if (chartContainerRef.current) {
         chart.applyOptions({ width: chartContainerRef.current.clientWidth });
@@ -569,7 +714,7 @@ export default function StockDetailClient({
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };
-  }, [data, comparisonData, indicators, transactions]);
+  }, [data, comparisonData, indicators, transactions, pendingOrders]);
 
   const openArticle = async (url: string) => {
     if (!url) return;
@@ -681,7 +826,7 @@ export default function StockDetailClient({
       futureCashFlows += projectedFCF / Math.pow(1 + (discountRate / 100), i);
     }
 
-    // calculate terminal value (value at year 5)
+    // calculate terminal value (@ year 5)
     // using exit multiple method: year 5 fcf * multiple
     const terminalValue = projectedFCF * terminalMultiple;
     // discount terminal value back to today
@@ -780,7 +925,7 @@ export default function StockDetailClient({
       </div>
 
       {/* grid layout; chart at the left & profile at tjhe right */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-125">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 min-h-125">
         {/* chart */}
         <div className="lg:col-span-2 luxury-card p-4 rounded-xl relative flex flex-col">
           {/* toolbar heading */}
@@ -936,7 +1081,15 @@ export default function StockDetailClient({
             </div>
 
             {/* chart container */}
-            <div ref={chartContainerRef} className="absolute inset-0 w-full h-full" />
+            <div className="flex-1 relative min-h-100">
+              <div ref={chartContainerRef} className="absolute inset-0 w-full h-full" />
+            </div>
+
+            {/* pending orders list */}
+            <PendingOrdersList
+              orders={pendingOrders}
+              onCancel={handleCancelOrder}
+            />
           </div>
         </div>
 
@@ -966,7 +1119,11 @@ export default function StockDetailClient({
                 ticker={ticker}
                 // get latest price from history data
                 currentPrice={data.length > 0 ? data[data.length - 1].close : 0}
-                onTrade={() => setRefreshTransactions(prev => prev + 1)}
+                onTrade={() => {
+                  setRefreshTransactions(prev => prev + 1);
+                  setRefreshOrders(prev => prev + 1);
+                  setRefreshHistory(prev => prev + 1);
+                }}
               />
             ) : (
               <>

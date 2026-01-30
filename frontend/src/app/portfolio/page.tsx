@@ -5,12 +5,13 @@ import PortfolioClient from "./PortfolioClient";
 async function getPortfolioData() {
     const API_URL = "http://localhost:8000";
     try {
-        const [portRes, accRes, analyticsRes, riskRes, benchmarkRes] = await Promise.all([
+        const [portRes, accRes, analyticsRes, riskRes, benchmarkRes, ordersRes] = await Promise.all([
             fetch(`${API_URL}/portfolio`, { cache: "no-store" }),
             fetch(`${API_URL}/account`, { cache: "no-store" }),
             fetch(`${API_URL}/portfolio/analytics`, { cache: "no-store" }),
             fetch(`${API_URL}/portfolio/risk`, { cache: "no-store" }),
-            fetch(`${API_URL}/portfolio/benchmark`, { cache: "no-store" })
+            fetch(`${API_URL}/portfolio/benchmark`, { cache: "no-store" }),
+            fetch(`${API_URL}/orders/pending`, { cache: "no-store" })
         ]);
 
         return {
@@ -18,7 +19,8 @@ async function getPortfolioData() {
             account: await accRes.json(),
             analytics: await analyticsRes.json(),
             risk: await riskRes.json(),
-            benchmark: await benchmarkRes.json()
+            benchmark: await benchmarkRes.json(),
+            orders: await ordersRes.json()
         };
     } catch (e) {
         console.error("Portfolio fetch failed", e);
@@ -36,6 +38,7 @@ async function PortfolioContent() {
             initialAnalytics={data?.analytics || []}
             initialRisk={data?.risk || null}
             initialBenchmark={data?.benchmark || null}
+            initialOrders={data?.orders || []}
         />
     );
 }

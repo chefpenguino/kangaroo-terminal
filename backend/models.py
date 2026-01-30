@@ -65,3 +65,14 @@ class FilingAnalysis(Base):
     summary_json = Column(Text)
     
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+class PendingOrder(Base):
+    __tablename__ = "pending_orders"
+    id = Column(Integer, primary_key=True, index=True)
+    ticker = Column(String, index=True)          # "BHP"
+    order_type = Column(String)                   # "LIMIT_BUY", "LIMIT_SELL", "STOP_LOSS"
+    shares = Column(Integer)
+    limit_price = Column(Float)
+    status = Column(String, default="PENDING")    # "PENDING", "FILLED", "CANCELLED"
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    filled_at = Column(DateTime, nullable=True)
