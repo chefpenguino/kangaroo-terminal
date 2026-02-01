@@ -23,18 +23,22 @@ CACHE = {
     "timestamp": None
 }
 
-def calculate_rrg(tickers=None, benchmark="^AXJO", period="6mo"):
+def calculate_rrg(tickers=None, benchmark="^AXJO", period="6mo", step=5, tail_length=10):
     """
     calculates rrg (relative rotation graph) coordinates.
     
     tickers : list of ticker symbols
     benchmark : benchmark ticker
     period : history period
+    step : interval between tail points (1=daily, 5=weekly)
+    tail_length : number of points in the tail
     """
     global CACHE
+
+    # check if defaults are requested and cache is valid
+    is_default_request = (tickers is None) and (step == 5) and (tail_length == 10)
     
-    # only use cache if default sectors (no custom tickers)
-    if tickers is None:
+    if is_default_request:
         if CACHE["data"] and CACHE["timestamp"]:
             # 1h cache
             if (datetime.now() - CACHE["timestamp"] < timedelta(hours=1)):
@@ -100,10 +104,11 @@ def calculate_rrg(tickers=None, benchmark="^AXJO", period="6mo"):
         if df_ticker.empty:
             continue
             
-        # get last 50 days
-        tail_data = df_ticker.tail(50)
+        # ensure we have enough data for the requested tail
+        required_days = step * tail_length
+        tail_data = df_ticker.tail(required_days + 5) # +buffer
         
-        iloc_indices = range(len(tail_data) - 1, -1, -5) # backwards every 5
+        iloc_indices = range(len(tail_data) - 1, -1, -step) # backwards every `step`
         selected_indices = sorted(list(iloc_indices))
         
         comet_tail = []
@@ -116,8 +121,8 @@ def calculate_rrg(tickers=None, benchmark="^AXJO", period="6mo"):
                 "date": date.strftime("%Y-%m-%d")
             })
             
-        # limit to exactly last 10 points if we have more
-        comet_tail = comet_tail[-10:]
+        # limit to exactly requested length 
+        comet_tail = comet_tail[-tail_length:]
         
         name = reverse_map.get(ticker, ticker)
         
@@ -130,7 +135,7 @@ def calculate_rrg(tickers=None, benchmark="^AXJO", period="6mo"):
         })
     
     # update cache if using defaults
-    if tickers is None:
+    if is_default_request:
         CACHE["data"] = results
         CACHE["timestamp"] = datetime.now()
         

@@ -61,6 +61,11 @@ export default function CyclesClient() {
   const [loading, setLoading] = useState(true);
   const [hoveredSector, setHoveredSector] = useState<string | null>(null);
 
+  // chart settings
+  const [period, setPeriod] = useState<"weekly" | "daily">("weekly");
+  const [range, setRange] = useState<number>(10);
+  const [showTrails, setShowTrails] = useState(true);
+
   // set bounds for chart
   const [xDomain, setXDomain] = useState([96, 104]); 
   const [yDomain, setYDomain] = useState([-4, 4]);
@@ -70,11 +75,11 @@ export default function CyclesClient() {
     // poll every 2s (live)
     const interval = setInterval(fetchCycles, 2000);
     return () => clearInterval(interval);
-  }, []);
+  }, [period, range]); // refetch when settings change
 
   const fetchCycles = async () => {
     try {
-      const res = await fetch("http://localhost:8000/cycles");
+      const res = await fetch(`http://localhost:8000/cycles?frequency=${period}&range=${range}`);
       if (!res.ok) throw new Error("failed to fetch cycles");
       const json = await res.json();
       setData(json);
@@ -166,13 +171,55 @@ export default function CyclesClient() {
 
   return (
     <div className="p-8 max-w-400 mx-auto min-h-screen">
-       <header className="mb-12 animate-in fade-in slide-in-from-bottom-4 duration-500">
-        <h1 className="mb-1 font-instrument text-4xl tracking-tight bg-linear-to-br via-stone-200 bg-clip-text text-transparent drop-shadow-[0_1.5px_1.5px_rgba(0,0,0,0.5)] whitespace-nowrap overflow-hidden">
-          Market Cycle Engine (Relative Rotation)
-        </h1>
+       <header className="mb-8 animate-in fade-in slide-in-from-bottom-4 duration-500 flex flex-col md:flex-row md:items-end justify-between gap-6">
+        <div>
+           <h1 className="mb-1 font-instrument text-4xl tracking-tight bg-linear-to-br via-stone-200 bg-clip-text text-transparent drop-shadow-[0_1.5px_1.5px_rgba(0,0,0,0.5)] whitespace-nowrap overflow-hidden">
+             Market Cycle Engine
+           </h1>
+           <p className="text-gray-400 text-sm">Relative Strength vs Momentum of sectors.</p>
+        </div>
+
+        {/* controls */}
+        <div className="flex items-center gap-4 bg-surface/50 border border-white/5 rounded-full px-4 py-2 backdrop-blur-md shadow-lg">
+            
+            {/* period selector */}
+             <div className="flex items-center gap-2 border-r border-white/10 pr-4">
+                <span className="text-[10px] uppercase font-bold text-gray-500 tracking-wider">Period</span>
+                <select 
+                    value={period}
+                    onChange={(e) => setPeriod(e.target.value as any)}
+                    className="bg-transparent text-sm font-medium text-white focus:outline-none cursor-pointer hover:text-primary transition-colors appearance-none"
+                    style={{ backgroundImage: 'none' }} 
+                >
+                    <option value="weekly" className="bg-surface text-gray-200">Weekly</option>
+                    <option value="daily" className="bg-surface text-gray-200">Daily</option>
+                </select>
+             </div>
+
+             {/* range slider */}
+             <div className="flex items-center gap-3 border-r border-white/10 pr-4">
+                <span className="text-[10px] uppercase font-bold text-gray-500 tracking-wider">Range ({range})</span>
+                <input 
+                    type="range" 
+                    min="2" 
+                    max="20" 
+                    value={range}
+                    onChange={(e) => setRange(Number(e.target.value))}
+                    className="w-20 accent-primary cursor-pointer h-1 bg-white/10 rounded-full appearance-none"
+                />
+             </div>
+
+             {/* trails toggle */}
+             <div className="flex items-center gap-2 cursor-pointer p-1 rounded hover:bg-white/5" onClick={() => setShowTrails(!showTrails)}>
+                <div className={`w-3 h-3 rounded-xs border ${showTrails ? 'bg-primary border-primary' : 'border-gray-500'}`}>
+                    {showTrails && <div className="text-black text-[10px] flex items-center justify-center font-bold leading-none">✓</div>}
+                </div>
+                <span className="text-[10px] uppercase font-bold text-gray-500 tracking-wider select-none">Trail</span>
+             </div>
+        </div>
       </header>
       
-      <div className="luxury-card flex flex-col md:flex-row h-175 md:h-200 overflow-hidden">
+      <div className="luxury-card flex flex-col md:flex-row h-175 md:h-200 overflow-hidden bg-black/40">
         {/* chart area */}
         <div className="flex-1 relative h-full p-4 md:p-6 min-h-125">
         {loading ? (
@@ -251,9 +298,9 @@ export default function CyclesClient() {
                         <Scatter 
                             key={sector.ticker}
                             name={sector.name}
-                            data={scatterData} 
+                            data={showTrails ? scatterData : [scatterData[scatterData.length - 1]]} 
                             fill={color} 
-                            line={{ stroke: color, strokeWidth: strokeWidth }}
+                            line={showTrails ? { stroke: color, strokeWidth: strokeWidth } : undefined}
                             shape={(props: any) => {
                                 const { cx, cy, payload } = props;
                                 if (payload.isHead) {

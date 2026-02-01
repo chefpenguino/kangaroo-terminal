@@ -22,30 +22,47 @@
 
 **Kangaroo Terminal** is a "Bloomberg Terminal" alternative designed specifically for the Australian market - but without the intimidation factor. 
 
-We believe financial data shouldn't look like a sci-fi hacker movie. It should be accessible, friendly, and easy to understand. Kangaroo Terminal bridges the gap between raw data and actionable insight by combining real-time market data by providing detailed analysis and AI-powered assistance, all wrapped in a **cozy, distraction-free interface** (unlike the traditional Bloomberg Terminal interface, which has poor UX).
+We believe financial data shouldn't look like a sci-fi hacker movie. It should be accessible, friendly, and easy to understand. Kangaroo Terminal bridges the gap between raw data and actionable insight by combining real-time market data by providing detailed analysis and AI-powered assistance, all wrapped in a **cozy, distraction-free interface** (unlike the traditional Bloomberg Terminal interface, which has poor UX and is inaccessible).
 
 ## 🎯 The Problem
-Institutional investors pay **$24,000/year** for terminals that aggregate data and news. Meanwhile, university students and retail investors are left digging through scattered PDFs on the ASX website, confusing Yahoo Finance charts, and messy spreadsheets. The data is there, but the user experience is hostile and irritating.
+Institutional investors pay **$24,000/year** for terminals that aggregate data and news. Meanwhile, university students and retail investors are left digging through scattered PDFs on the ASX website, confusing Yahoo Finance charts, and messy spreadsheets. The data is there, but the user experience is hostile and irritating. Kangaroo Terminal aims to demoratise **Context**, now just showing you that a price moved, but telling you *why* it moved, *who* is buying, and *what* the risks are.
 
 ## ⚡ The Solution
-A unified, friendly dashboard that:
-1.  **Aggregates Data:** Real-time price, volume, and sector data for ASX listings.
-2.  **Parses Documents:** Automatically scrapes and extracts text from ASX PDF announcements (Annual Reports, Updates).
-3.  **Analyses Sentiment:** Uses LLMs (gemini 3 pro through `ai.hackclub.com`) to summarise lengthy reports into key bullet points and risk factors.
-4.  **Models Valuation:** Provides interactive DCF (Discounted Cash Flow) sandboxes for students to test valuation assumptions.
+A unified, friendly dashboard that provides:
+#### Agentic Intelligence
+1. A **conversational AI agent** (powered by `browser-use`) that can autonomously browse the live internet to research news, rumours, and macroeconomic events. 
+2. A **'why' engine**, which automatically scans charts for area of volatility and dispatches AI agents to find and display the news event(s) which caused spikes or drops in price, inspired by Tradingview's news bubbles.
+3. **Document Intelligence**, scraping and summarising ASX200 company PDF filings (annual reports, etc) into actionable insights.
+
+#### Analysis Tools
+1. A **Cycle Engine**, dispaying Interactive Relative Rotation Graphs (RRG) to visualise momentum between sectors. 
+2. An **'Arena' Mode**, serving as a comparison engine which analyses performance & fundamentals b/w any two assets.
+3. A **'Signal Hunter'**, scanning the market in real-time to detect technical setups (Golden Cross, RSI Extremes) and whale activity.
+4. Interactive Discounted Cash Flow (DCF) models.
+
+#### Portfolio Management
+1. **Paper Trading (OMS)** - a full-fledged paper trading system with proper order management, supporting limit, market and stop orders.
+2. A **'Risk Engine'**, calculating portfolio beta, correlation matrices and orders in real-time.
+3. A **Time Machine**, benchmarking the portfolio against ~1y prior to analyse diversification and sensitivty to risk.
 
 ## 🛠 Tech Stack
 
-*   **Frontend:** Next.js (React), TypeScript, Tailwind CSS.
-*   **Backend:** Python (FastAPI) for data processing and financial logic.
-*   **Database:** SqlAlchemy (Local), Supabase for Deployment
-*   **AI/ML:** Gemini API for RAG (Retrieval-Augmented Generation) on financial documents.
-*   **Data Sources:** yfinance, ASX official announcements (scraped).
+### Frontend
+- **Framework:** Next.js 15 (App Router / React 19)
+- **Language:** TypeScript
+- **Styling:** Tailwind CSS + Framer Motion 
+- **Charts:** Lightweight Charts (TradingView) & Recharts
 
+### Backend
+- **Engine:** Python 3.12+ (FastAPI)
+- **Intelligence:** Google Gemini 3 Flash & Pro *(via https://ai.hackaclub.com)*
+- **'Agentic' AI:** Browser-use & Playwright (Autonomous Web Navigation)
+- **Data Engineering:** yFinance, Pandas, NumPy, SQLAlchemy
+- **Data Sources:** yfinance, Newspaper3k, Feedparser, and custom scrapers
 ---
 
 <div align="center">
-  <p><em>Built with 🧡 by Penguino for the Hack Club Flavortown challenge</em></p>
+  <p><em>Built with 🧡 by <b>chefpenguino</b> for the Hack Club Flavortown challenge</em></p>
 </div>
 
 <!-- HACK CLUB BRANDING -->

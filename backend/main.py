@@ -209,12 +209,15 @@ async def get_market_status():
     return {"is_open": is_market_open()}
 
 @app.get("/cycles")
-async def get_market_cycles():
+async def get_market_cycles(frequency: str = "weekly", range: int = 10):
     """
-    get relative rotation graph (rrg) data for asx sectors
+    get relative rotation graph (rrg) data for asx sectors.
+    frequency: 'daily' or 'weekly'
+    range: number of tail points
     """
     try:
-        data = rotation_engine.calculate_rrg()
+        step = 5 if frequency == "weekly" else 1
+        data = rotation_engine.calculate_rrg(step=step, tail_length=range)
         return data
     except Exception as e:
         print(f"Error in /cycles: {e}")
