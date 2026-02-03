@@ -18,6 +18,14 @@ class Stock(Base):
     market_cap = Column(String, nullable=True)       # "200B"
     volume = Column(String, nullable=True)
     
+    # relative value 
+    pe_ratio = Column(Float, nullable=True)          # price to earnings
+    price_to_book = Column(Float, nullable=True)     # P/B ratio
+    return_on_equity = Column(Float, nullable=True)  
+    revenue_growth = Column(Float, nullable=True)    
+    peg_ratio = Column(Float, nullable=True)         
+    dividend_yield = Column(Float, nullable=True)   
+    
     last_updated = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     is_watched = Column(Boolean, default=False)
 

@@ -24,12 +24,11 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 import logging
 
-# suppress noise from polling endpoints
+# make the endpoints stop spamming in console logs
 class PollingFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         msg = record.getMessage()
-        # noisy endpoints to suppress
-        noisy_endpoints = ["/account", "/watchlist", "/transactions", "/alerts/triggered", "/scraper-status", "/stocks", "/global-markets"]
+        noisy_endpoints = ["/account", "/watchlist", "/transactions", "/alerts/triggered", "/scraper-status", "/stocks", "/global-markets"] # noisy endpoints
         return not any(endpoint in msg for endpoint in noisy_endpoints)
 
 logging.getLogger("uvicorn.access").addFilter(PollingFilter())
@@ -174,9 +173,8 @@ async def lifespan(app: FastAPI):
     scanner_task = asyncio.create_task(scanner_background_task())
     alerts_task = asyncio.create_task(alert_monitor_task())
     
-    yield  # runs here
+    yield 
     
-    # ensure shutdown - scraper prkoperly cancelled upon ctrl+c press
     print("[🦘] kangaroo engine shutting down...")
     scraper_task.cancel()
     scanner_task.cancel()
@@ -190,7 +188,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# cors - allows Next.js frontend to talk to backend 
+# cors 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],
@@ -211,9 +209,8 @@ async def get_market_status():
 @app.get("/cycles")
 async def get_market_cycles(frequency: str = "weekly", range: int = 10):
     """
-    get relative rotation graph (rrg) data for asx sectors.
-    frequency: 'daily' or 'weekly'
-    range: number of tail points
+    get relative rotation graph (rrg) data for asx sectors
+    'daily' or 'weekly'
     """
     try:
         step = 5 if frequency == "weekly" else 1
@@ -237,13 +234,11 @@ def get_stocks(db: Session = Depends(get_db)):
 @app.get("/search")
 def search_stocks(q: str, db: Session = Depends(get_db)):
     """
-    Search stocks by Ticker or Name.
-    Case insensitive. Limits to 5 results for dropdown.
+    search stocks by ticker or name
     """
     if not q:
         return []
     
-    # ilike is case-insensitive
     results = db.query(models.Stock).filter(
         or_(
             models.Stock.ticker.ilike(f"%{q}%"),
@@ -445,17 +440,15 @@ def get_stock_financials(ticker: str):
         symbol = f"{ticker.upper()}.AX"
         stock = yf.Ticker(symbol)
         
-        # get annual income statement
         financials = stock.income_stmt
         
         # clean up data: NaN/Inf -> None
         financials = financials.replace({float('nan'): None, float('inf'): None, float('-inf'): None})
         financials = financials.where(pd.notnull(financials), None)
         
-        # convert columns (dates) to strings so JSON can handle them
+        # columns (dates) to strings
         financials.columns = [col.strftime('%Y-%m-%d') for col in financials.columns]
         
-        # return as a directory
         return financials.to_dict()
     except Exception as e:
         print(f"Error fetching financials: {e}")
@@ -580,12 +573,12 @@ async def read_article(url: str):
 
             # readability for actual content
             doc = Document(html_content)
-            clean_html = doc.summary() # <div>/<table>/<b> preserved
+            clean_html = doc.summary() 
             clean_title = doc.title()
 
             return {
                 "title": clean_title,
-                # fallback to newspaper image if readability doesn't provide one (i think it usually doesn't)
+                # fallback to newspaper image if readability doesn't provide one (i think it usually doesn't [?])
                 "top_image": article_meta.top_image,
                 "authors": article_meta.authors,
                 "publish_date": article_meta.publish_date,
@@ -659,7 +652,7 @@ async def analyse_stock(ticker: str):
 
     except Exception as e:
         print(f"AI Error: {e}")
-        return {"report": "## ⚠️ System Offline\nKangaroo Neural Net could not connect to the mainframe."}
+        return {"report": "## ⚠️ System Offline\nKangaroo Neural Net could not poll Gemini."}
     
 @app.get("/stock/{ticker}/valuation")
 def get_stock_valuation(ticker: str):
@@ -1130,10 +1123,9 @@ async def get_portfolio_risk(db: Session = Depends(get_db)):
             return {"error": "No holdings to analyse"}
 
         tickers = [h.ticker for h in holdings]
-        # add the benchmark (asx200)
         tickers.append("^AXJO")
         
-        # add .AX suffix for aussie stocks (except the index)
+        # add .AX suffix for aussie stocks 
         yf_tickers = [f"{t}.AX" if not t.startswith("^") else t for t in tickers]
         
         # 1y of history for all assets
@@ -1142,12 +1134,12 @@ async def get_portfolio_risk(db: Session = Depends(get_db)):
         if data.empty:
             return {"error": "Could not fetch data"}
 
-        # daily returns (percentage change)
+        # daily returns
         returns = data.pct_change(fill_method=None).dropna()
         
         corr_matrix = returns.corr()
         
-        # format correlation for frontend heatmap
+        # format correlation for heatmap
         correlation_data = []
         clean_tickers = [t.replace(".AX", "") for t in tickers] 
         
@@ -1157,8 +1149,7 @@ async def get_portfolio_risk(db: Session = Depends(get_db)):
             
             for j, tick_y in enumerate(clean_tickers):
                 if tick_y == "^AXJO": continue
-                
-                # yfinance uses the .AX names in the columns
+
                 col_x = f"{tick_x}.AX" if tick_x != "^AXJO" else "^AXJO"
                 col_y = f"{tick_y}.AX" if tick_y != "^AXJO" else "^AXJO"
                 
@@ -1182,7 +1173,7 @@ async def get_portfolio_risk(db: Session = Depends(get_db)):
         # calculate current total value to get weights
         holding_values = {}
         for h in holdings:
-            # use the last available price in our downloaded data
+            # use the last available price in downloaded data
             try:
                 last_price = data[f"{h.ticker}.AX"].iloc[-1]
                 val = h.shares * last_price
@@ -1489,12 +1480,12 @@ async def get_order_history(db: Session = Depends(get_db)):
 
 @app.get("/transactions")
 async def get_transactions(db: Session = Depends(get_db)):
-    """Get the last 20 trades for the status bar"""
+    """last 20 transaction history"""
     return db.query(models.TransactionHistory).order_by(models.TransactionHistory.timestamp.desc()).limit(20).all()
 
 @app.get("/stock/{ticker}/transactions")
 async def get_stock_transactions(ticker: str, db: Session = Depends(get_db)):
-    """Get all transactions for a specific ticker to plot on the chart"""
+    """all transaction history"""
     return db.query(models.TransactionHistory).filter(models.TransactionHistory.ticker == ticker.upper()).order_by(models.TransactionHistory.timestamp.asc()).all()
 
 @app.get("/global-markets")
@@ -1580,7 +1571,6 @@ def compare_stocks(t1: str, t2: str):
             perf_1y = ((end_price - start_price) / start_price) * 100
             
             # normalise metrics for radar (0-100)
-            # approximations for visualisation
             def norm_pe(pe):
                 if not pe: return 50
                 if pe < 0: return 20 
@@ -1823,6 +1813,170 @@ async def compare_ai_verdict(req: CompareRequest):
     except Exception as e:
         print(f"Comparison AI Error: {e}")
         return {"report": "<p>AI Analysis unavailable.</p>"}
+
+@app.get("/analysis/relative-value")
+def get_relative_value(sector: str, x_metric: str, y_metric: str, db: Session = Depends(get_db)):
+    """
+    returns scatter plot for sector-based relative value analysis & calculates regression line 
+    """
+    import math
+    
+    def is_valid_number(val):
+        if val is None:
+            return False
+        try:
+            return math.isfinite(float(val))
+        except (ValueError, TypeError):
+            return False
+    
+    def safe_float(val, default=0.0):
+        if not is_valid_number(val):
+            return default
+        return float(val)
+    
+    try:
+        # get all stocks 
+        stocks = db.query(models.Stock).filter(models.Stock.sector == sector).all()
+        
+        if not stocks:
+            return {"points": [], "regression": None, "sector": sector}
+        
+        # metric names / db columns
+        allowed_metrics = {
+            "pe_ratio": "pe_ratio",
+            "price_to_book": "price_to_book",
+            "return_on_equity": "return_on_equity",
+            "revenue_growth": "revenue_growth",
+            "peg_ratio": "peg_ratio",
+            "dividend_yield": "dividend_yield"
+        }
+        
+        x_col = allowed_metrics.get(x_metric)
+        y_col = allowed_metrics.get(y_metric)
+        
+        if not x_col or not y_col:
+            raise HTTPException(status_code=400, detail="Invalid metric selected")
+        
+        #parse market cap
+        def parse_cap(cap_str):
+            if not cap_str: return 0.0
+            s = str(cap_str).upper().replace('$', '').replace(',', '')
+            try:
+                if 'T' in s: return float(s.replace('T', '')) * 1_000_000_000_000
+                if 'B' in s: return float(s.replace('B', '')) * 1_000_000_000
+                if 'M' in s: return float(s.replace('M', '')) * 1_000_000
+                if 'K' in s: return float(s.replace('K', '')) * 1_000
+                return float(s)
+            except:
+                return 0.0
+        
+        points = []
+        x_vals = []
+        y_vals = []
+        
+        for stock in stocks:
+            x_val = getattr(stock, x_col)
+            y_val = getattr(stock, y_col)
+            
+            # skip stocks missing
+            if not is_valid_number(x_val) or not is_valid_number(y_val):
+                continue
+            
+            # convert to % 
+            x_display = x_val * 100 if x_metric in ['return_on_equity', 'revenue_growth', 'dividend_yield'] else x_val
+            y_display = y_val * 100 if y_metric in ['return_on_equity', 'revenue_growth', 'dividend_yield'] else y_val
+
+            if not is_valid_number(x_display) or not is_valid_number(y_display):
+                continue
+            
+            mcap = parse_cap(stock.market_cap)
+            
+            points.append({
+                "ticker": stock.ticker,
+                "name": stock.name,
+                "x": round(float(x_display), 2),
+                "y": round(float(y_display), 2),
+                "market_cap": safe_float(mcap),
+                "price": safe_float(stock.price),
+                "change_percent": stock.change_percent
+            })
+            
+            x_vals.append(float(x_display))
+            y_vals.append(float(y_display))
+        
+        # linear regession (y = mx + b)
+        regression = None
+        if len(x_vals) >= 2:
+            x_arr = np.array(x_vals)
+            y_arr = np.array(y_vals)
+            
+            n = len(x_vals)
+            x_mean = np.mean(x_arr)
+            y_mean = np.mean(y_arr)
+            
+            numerator = np.sum((x_arr - x_mean) * (y_arr - y_mean))
+            denominator = np.sum((x_arr - x_mean) ** 2)
+            
+            if denominator != 0 and is_valid_number(denominator):
+                slope = numerator / denominator
+                intercept = y_mean - slope * x_mean
+                
+                # validate slope & intercept
+                if is_valid_number(slope) and is_valid_number(intercept):
+                    # r-squared 
+                    y_pred = slope * x_arr + intercept
+                    ss_res = np.sum((y_arr - y_pred) ** 2)
+                    ss_tot = np.sum((y_arr - y_mean) ** 2)
+                    r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
+                    
+                    # line end-points
+                    x_min = float(np.min(x_arr))
+                    x_max = float(np.max(x_arr))
+                    
+                    regression = {
+                        "slope": round(float(slope), 4),
+                        "intercept": round(float(intercept), 4),
+                        "r_squared": round(float(r_squared), 4) if is_valid_number(r_squared) else 0,
+                        "line": [
+                            {"x": x_min, "y": round(float(slope * x_min + intercept), 2)},
+                            {"x": x_max, "y": round(float(slope * x_max + intercept), 2)}
+                        ]
+                    }
+                    
+                    # positive = above line (overvalued) | negative = below (undervalued)
+                    for point in points:
+                        expected_y = slope * point['x'] + intercept
+                        residual = point['y'] - expected_y
+                        if is_valid_number(residual):
+                            point['residual'] = round(float(residual), 2)
+                            point['valuation'] = "overvalued" if residual > 0 else "undervalued"
+        
+        return {
+            "points": points,
+            "regression": regression,
+            "sector": sector,
+            "x_metric": x_metric,
+            "y_metric": y_metric,
+            "count": len(points)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Relative value error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/analysis/sectors")
+def get_sectors_list(db: Session = Depends(get_db)):
+    """
+    returns list of unique sectors for dropdown
+    """
+    sectors = db.query(models.Stock.sector).filter(
+        models.Stock.sector != None,
+        models.Stock.sector != "Unknown"
+    ).distinct().all()
+    
+    return [s[0] for s in sectors if s[0]]
 
 # market scanner
 @app.get("/scanner/run")
@@ -2067,10 +2221,10 @@ async def generate_briefing_endpoint(db: Session = Depends(get_db)):
         
         # watchlist & holdings
         watchlist = await asyncio.to_thread(get_watchlist, db)
-        holdings = db.query(models.Holding).all() # This is now sync and fast enough, but could be offloaded too
+        holdings = db.query(models.Holding).all() 
         portfolio_tickers = [h.ticker for h in holdings]
         
-        # calendar & market movers (run sequentially to avoid DB session thread-safety issues, but in threads to keep loop free)
+        # calendar & market movers 
         calendar = await asyncio.to_thread(get_upcoming_calendar, db) 
         movers = await asyncio.to_thread(get_market_movers, db) 
         
@@ -2079,7 +2233,6 @@ async def generate_briefing_endpoint(db: Session = Depends(get_db)):
         if portfolio_tickers:
             news_tickers.extend(portfolio_tickers[:3])
         if watchlist:
-            # avoid dupes
             for w in watchlist[:2]:
                 if w.ticker not in news_tickers:
                     news_tickers.append(w.ticker)
@@ -2090,7 +2243,6 @@ async def generate_briefing_endpoint(db: Session = Depends(get_db)):
         global_markets = results[0]
         news_results = results[1:]
         
-        # flatten and format news
         news_context = []
         for i, ticker in enumerate(news_tickers):
             items = news_results[i][:2] # take top 2 headlines

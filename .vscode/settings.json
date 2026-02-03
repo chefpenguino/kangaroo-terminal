@@ -1,0 +1,8 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^/home/user/Documents/VSCode/Kangaroo\\\\ Terminal/backend/\\.venv/bin/python backend/backfill_stats\\.py$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}

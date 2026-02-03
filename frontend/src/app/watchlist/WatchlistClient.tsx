@@ -24,7 +24,7 @@ export default function WatchlistClient({ initialStocks }: WatchlistClientProps)
 const fetchStories = async () => {
     const toastId = toast.loading("Kangaroo Agent Active", {
       description: "Scanning market events & generating stories...",
-      icon: <Loader2 className="animate-spin text-primary" size={16} /> 
+      // icon: <Loader2 className="animate-spin text-primary" size={16} /> 
     });
     
     try {

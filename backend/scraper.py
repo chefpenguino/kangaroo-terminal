@@ -67,7 +67,12 @@ class ASXScraper:
                     if (cells.length >= 8) {
                         const codeCell = cells[1];
                         const code = codeCell.querySelector('a')?.textContent?.trim() || codeCell.textContent?.trim() || '';
-                        const company = cells[2].textContent.trim();
+                        let company = cells[2]..trim();
+                        
+                        // avoid (e.g. "BHPBHP Group")
+                        if (code && company.startsWith(code) && company.length > code.length) {
+                            company = company.substring(code.length).trim();
+                        }textContent
                         
                         // clean price strings ("$10.50" -> 10.50)
                         const getVal = (i) => cells[i]?.textContent?.trim() || '0';

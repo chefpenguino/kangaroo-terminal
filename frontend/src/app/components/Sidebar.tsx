@@ -16,7 +16,8 @@ import {
   Swords,
   Radar,
   RotateCw,
-  Orbit
+  Orbit,
+  Scale
 } from "lucide-react";
 
 import { useSidebar } from "@/context/SidebarContext"
@@ -147,6 +148,7 @@ export default function Sidebar() {
         <NavItem href="/hunter" label="Signal Hunter" icon={Radar} active={pathname === "/hunter"} layoutId="nav-highlight" collapsed={isCollapsed} />
         <NavItem href="/cycles" label="Cycle Engine" icon={RotateCw} active={pathname === "/cycles"} layoutId="nav-highlight" collapsed={isCollapsed} />
         <NavItem href="/galaxy" label="Market Galaxy" icon={Orbit} active={pathname === "/galaxy"} layoutId="nav-highlight" collapsed={isCollapsed} />
+        <NavItem href="/rv" label="Relative Value" icon={Scale} active={pathname === "/rv"} layoutId="nav-highlight" collapsed={isCollapsed} />
         <NavItem href="/compare" label="Arena Mode" icon={Swords} active={pathname === "/compare"} layoutId="nav-highlight" collapsed={isCollapsed} />
 
         <NavItem href="/ai" label="AI Analyst" icon={BrainCircuit} active={pathname === "/ai"} layoutId="nav-highlight" collapsed={isCollapsed} />
