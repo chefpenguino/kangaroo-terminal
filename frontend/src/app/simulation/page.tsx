@@ -3,6 +3,8 @@ import { Loader2 } from "lucide-react";
 import SimulationClient from "./SimulationClient";
 import { API_URL } from "@/lib/api";
 
+export const dynamic = "force-dynamic";
+
 async function getSimulationData(ticker: string) {
   try {
     const res = await fetch(`${API_URL}/stock/${ticker}/history?period=2y`, { cache: "no-store" });

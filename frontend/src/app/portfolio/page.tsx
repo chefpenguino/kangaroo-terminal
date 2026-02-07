@@ -3,6 +3,8 @@ import { Loader2 } from "lucide-react";
 import PortfolioClient from "./PortfolioClient";
 import { API_URL } from "@/lib/api";
 
+export const dynamic = "force-dynamic";
+
 async function getPortfolioData() {
     try {
         const [portRes, accRes, analyticsRes, riskRes, benchmarkRes, ordersRes] = await Promise.all([

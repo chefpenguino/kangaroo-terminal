@@ -3,6 +3,8 @@ import { Loader2 } from "lucide-react";
 import ScreenerClient from "./ScreenerClient";
 import { API_URL } from "@/lib/api";
 
+export const dynamic = "force-dynamic";
+
 async function getScreenerData() {
   try {
     const [moversRes, mapRes] = await Promise.all([

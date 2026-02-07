@@ -3,6 +3,8 @@ import { Loader2 } from "lucide-react";
 import RVClient from "./RVClient";
 import { API_URL } from "@/lib/api";
 
+export const dynamic = "force-dynamic";
+
 async function getRVData() {
   try {
     const sectorsRes = await fetch(`${API_URL}/analysis/sectors`, { cache: "no-store" });

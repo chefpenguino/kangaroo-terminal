@@ -3,6 +3,8 @@ import { Loader2 } from "lucide-react";
 import WatchlistClient from "./WatchlistClient";
 import { API_URL } from "@/lib/api";
 
+export const dynamic = "force-dynamic";
+
 async function getWatchlist() {
   try {
     const res = await fetch(`${API_URL}/watchlist`, { cache: "no-store" });
